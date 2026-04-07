@@ -612,3 +612,43 @@
     grid-template-columns: 1fr;
   }
 }
+
+.docsContextMenuBackdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 999;
+}
+
+.docsContextMenu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--docs-surface, #fff);
+  border: 1px solid rgba(234, 215, 181, 0.6);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 4px;
+  min-width: 180px;
+}
+
+.docsContextMenuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--docs-ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.docsContextMenuItem:hover {
+  background: rgba(199, 105, 45, 0.08);
+  color: var(--docs-accent-strong);
+}

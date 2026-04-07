@@ -358,6 +358,8 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   const [newFolderName, setNewFolderName] = useState('');
   const [dragDocumentId, setDragDocumentId] = useState<string | null>(null);
   const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; parentId: string | null } | null>(null);
+  const [createDocInFolderId, setCreateDocInFolderId] = useState<string | null>(null);
   const [moveFolderValue, setMoveFolderValue] = useState('');
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
   const [showSwitchOverlay, setShowSwitchOverlay] = useState(false);
@@ -415,12 +417,19 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     const name = newFolderName.trim();
     if (!name) return;
     try {
-      const response = await createFolder(http, { name, parentId: currentFolderId });
+      const parentId = contextMenu?.parentId ?? currentFolderId;
+      const response = await createFolder(http, { name, parentId });
       setFolders((current) => [...current, response.folder]);
       setNewFolderName('');
       setIsCreatingFolder(false);
-    } catch (error) {
-      notifications.toasts.addDanger(`Failed to create folder: ${error}`);
+      setContextMenu(null);
+    } catch (error: any) {
+      const message = error?.body?.message || error?.message || String(error);
+      if (message.toLowerCase().includes('already exists')) {
+        notifications.toasts.addWarning(`A folder named "${name}" already exists here.`);
+      } else {
+        notifications.toasts.addDanger(`Failed to create folder: ${message}`);
+      }
     }
   }
 
@@ -1192,14 +1201,15 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     }
   }
 
-  function startNewDocument() {
+  function startNewDocument(folderId?: string | null) {
+    const folder = folderId ? folders.find((f) => f.id === folderId) : null;
     setIsCreatingNew(true);
     setSelectedId(null);
     setSelectedDocument(null);
     setDraftTitle('');
     setDraftContent('');
-    setDraftFolder('');
-    setDraftFolderId('');
+    setDraftFolder(folder?.path ?? '');
+    setDraftFolderId(folder?.id ?? '');
     draftContentRef.current = '';
     serverShadowContentRef.current = '';
     serverVersionRef.current = 0;
@@ -1211,7 +1221,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     setCollaborationSessionId(null);
     setCollaborationParticipants([]);
     setCoordinatorSessionId(null);
-    setStatusMessage('New draft ready');
+    setStatusMessage(folder ? `New draft in "${folder.path}"` : 'New draft ready');
   }
 
   function selectDocument(documentId: string) {
@@ -1469,6 +1479,10 @@ export function DocsApp({ coreStart }: DocsAppProps) {
             type="button"
             className={`docsSidebarFolderRow ${dropTargetFolderId === node.id ? 'docsSidebarFolderRow--dropTarget' : ''}`}
             onClick={() => setCurrentFolderId(node.id)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setContextMenu({ x: e.clientX, y: e.clientY, parentId: node.id });
+            }}
             onDragOver={(e) => {
               e.preventDefault();
               setDropTargetFolderId(node.id);
@@ -1560,7 +1574,13 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                 </EuiText>
               </div>
             ) : null}
-            <div className="docsSidebarList">
+            <div
+              className="docsSidebarList"
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setContextMenu({ x: e.clientX, y: e.clientY, parentId: currentFolderId });
+              }}
+            >
               {currentFolderId && currentFolder ? (
                 <div className="docsSidebarSection">
                   <div className="docsFolderNav">
@@ -2097,6 +2117,39 @@ export function DocsApp({ coreStart }: DocsAppProps) {
             notifications.toasts.addSuccess(`Updated sharing for folder "${shareFolderName}".`);
           }}
         />
+      ) : null}
+
+      {contextMenu ? (
+        <>
+          <div className="docsContextMenuBackdrop" onClick={() => setContextMenu(null)} />
+          <div
+            className="docsContextMenu"
+            style={{ top: contextMenu.y, left: contextMenu.x }}
+          >
+            <button
+              type="button"
+              className="docsContextMenuItem"
+              onClick={() => {
+                startNewDocument(contextMenu.parentId);
+                setContextMenu(null);
+              }}
+            >
+              <EuiIcon type="document" size="s" />
+              <span>New Document{contextMenu.parentId ? ' (in folder)' : ''}</span>
+            </button>
+            <button
+              type="button"
+              className="docsContextMenuItem"
+              onClick={() => {
+                setIsCreatingFolder(true);
+                setContextMenu(null);
+              }}
+            >
+              <EuiIcon type="folderClosed" size="s" />
+              <span>New Folder{contextMenu.parentId ? ' (inside)' : ''}</span>
+            </button>
+          </div>
+        </>
       ) : null}
     </div>
   );
