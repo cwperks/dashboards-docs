@@ -83,7 +83,14 @@ export interface ResourceSharingInfo {
 }
 
 export interface ResourceSharingResponse {
+  exists?: boolean;
   sharing_info?: ResourceSharingInfo;
+}
+
+export interface ShareUpdatePayload {
+  add?: ShareWith;
+  revoke?: ShareWith;
+  general_access?: string | null;
 }
 
 export interface ResourceAccessInfo {

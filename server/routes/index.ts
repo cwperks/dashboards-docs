@@ -249,11 +249,17 @@ export function defineRoutes(router: IRouter, logger: Logger) {
           },
         });
 
-        return response.ok({ body: getResponseBody(sharingResponse) });
+        return response.ok({
+          body: {
+            exists: true,
+            ...getResponseBody(sharingResponse),
+          },
+        });
       } catch (error: any) {
         if (error?.statusCode === 404 || error?.body?.statusCode === 404) {
           return response.ok({
             body: {
+              exists: false,
               sharing_info: {
                 resource_id: request.query.resourceId,
                 resource_type: request.query.resourceType,
@@ -336,6 +342,8 @@ export function defineRoutes(router: IRouter, logger: Logger) {
         body: schema.object({
           resource_id: schema.string(),
           resource_type: schema.string(),
+          add: schema.maybe(shareWithSchema),
+          revoke: schema.maybe(shareWithSchema),
           general_access: schema.maybe(schema.nullable(schema.string())),
         }),
       },

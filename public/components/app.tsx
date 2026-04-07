@@ -791,11 +791,8 @@ export function DocsApp({ coreStart }: DocsAppProps) {
           resourceType={DOC_RESOURCE_TYPE}
           accessLevels={shareAccessLevels}
           onClose={() => setIsShareModalVisible(false)}
-          onSave={(generalAccess) => {
-            const label = generalAccess ? generalAccess.replace(/^docs_/, '').replace(/_/g, ' ') : 'private';
-            notifications.toasts.addSuccess(
-              `Updated sharing for "${selectedDocument.title}" to ${label}.`
-            );
+          onSave={() => {
+            notifications.toasts.addSuccess(`Updated sharing for "${selectedDocument.title}".`);
           }}
         />
       ) : null}

@@ -9,6 +9,7 @@ import {
   ResourceAccessResponse,
   ResourceSharingConfig,
   ResourceSharingResponse,
+  ShareUpdatePayload,
   ShareWith,
 } from '../../common';
 
@@ -61,13 +62,13 @@ export async function updateSharingInfo(
   http: HttpStart,
   resourceId: string,
   resourceType: string,
-  generalAccess: string | null
+  update: ShareUpdatePayload
 ): Promise<ResourceSharingResponse> {
   return http.post<ResourceSharingResponse>(`${DASHBOARDS_DOCS_API_BASE}/resourceSharing/update`, {
     body: JSON.stringify({
       resource_id: resourceId,
       resource_type: resourceType,
-      general_access: generalAccess,
+      ...update,
     }),
   });
 }
