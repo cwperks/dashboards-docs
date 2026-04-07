@@ -3,12 +3,13 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { KeyboardEvent, useEffect, useRef, useState } from 'react';
 import {
   EuiBadge,
   EuiButton,
   EuiButtonEmpty,
   EuiCallOut,
+  EuiConfirmModal,
   EuiFieldSearch,
   EuiFieldText,
   EuiFlexGroup,
@@ -22,13 +23,26 @@ import {
   EuiTitle,
 } from '@elastic/eui';
 import { CoreStart } from '../../../../src/core/public';
-import { DocumentRecord, DocumentSummary, PLUGIN_NAME } from '../../common';
+import {
+  DOC_DELETE_ACTION,
+  DOC_RESOURCE_TYPE,
+  DOC_UPSERT_ACTION,
+  DocumentRecord,
+  DocumentSummary,
+  EMPTY_RESOURCE_SHARING_CONFIG,
+  getAccessLevelsForType,
+  PLUGIN_NAME,
+  supportsResourceSharingForType,
+} from '../../common';
 import {
   createDocument,
+  deleteDocument,
   getDocument,
   listDocuments,
   updateDocument,
 } from '../services/documents';
+import { ShareModal } from './share_modal';
+import { getResourceAccess, getSharingConfig } from '../services/sharing';
 
 type ViewMode = 'write' | 'split' | 'preview';
 
@@ -83,18 +97,32 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedDocument, setSelectedDocument] = useState<DocumentRecord | null>(null);
-  const [draftTitle, setDraftTitle] = useState('Untitled document');
+  const [draftTitle, setDraftTitle] = useState('');
   const [draftContent, setDraftContent] = useState('');
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('split');
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
+  const [isShareModalVisible, setIsShareModalVisible] = useState(false);
+  const [showSwitchOverlay, setShowSwitchOverlay] = useState(false);
   const [statusMessage, setStatusMessage] = useState('Ready to write');
   const [conflictDocument, setConflictDocument] = useState<DocumentRecord | null>(null);
   const [inlineError, setInlineError] = useState<string | null>(null);
+  const [readOnlyReason, setReadOnlyReason] = useState<string | null>(null);
+  const [canDeleteDocument, setCanDeleteDocument] = useState(true);
+  const [canShareDocument, setCanShareDocument] = useState(true);
+  const [sharingConfig, setSharingConfig] = useState(EMPTY_RESOURCE_SHARING_CONFIG);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const isSwitchingDocuments =
+    isLoadingDocument && selectedDocument !== null && selectedDocument.id !== selectedId;
+  const supportsSharing = supportsResourceSharingForType(sharingConfig, DOC_RESOURCE_TYPE);
+  const shareAccessLevels = getAccessLevelsForType(sharingConfig, DOC_RESOURCE_TYPE);
+  const isReadOnly = readOnlyReason !== null;
 
   useEffect(() => {
     chrome.docTitle.change([PLUGIN_NAME]);
@@ -104,6 +132,29 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       chrome.docTitle.reset();
     };
   }, [chrome]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadSharingConfig() {
+      try {
+        const response = await getSharingConfig(http);
+        if (!cancelled) {
+          setSharingConfig(response);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setSharingConfig(EMPTY_RESOURCE_SHARING_CONFIG);
+        }
+      }
+    }
+
+    void loadSharingConfig();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [http]);
 
   useEffect(() => {
     let cancelled = false;
@@ -136,7 +187,22 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [http, isCreatingNew, search, selectedId]);
+  }, [http, isCreatingNew, search]);
+
+  useEffect(() => {
+    if (!isSwitchingDocuments) {
+      setShowSwitchOverlay(false);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setShowSwitchOverlay(true);
+    }, 120);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [isSwitchingDocuments]);
 
   useEffect(() => {
     if (!selectedId) {
@@ -155,20 +221,36 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     async function loadSelectedDocument() {
       setIsLoadingDocument(true);
       setInlineError(null);
+      setStatusMessage('Opening document...');
 
       try {
-        const response = await getDocument(http, documentId);
+        const [documentResponse, accessResponse] = await Promise.all([
+          getDocument(http, documentId),
+          supportsSharing
+            ? getResourceAccess(http, documentId, DOC_RESOURCE_TYPE).catch(() => null)
+            : Promise.resolve(null),
+        ]);
         if (cancelled) {
           return;
         }
 
-        setSelectedDocument(response.document);
-        setDraftTitle(response.document.title);
-        setDraftContent(response.document.content);
+        const allowedActions = accessResponse?.access.allowed_actions ?? [];
+        const canEdit = accessResponse ? allowedActions.includes(DOC_UPSERT_ACTION) : true;
+        const canDelete = accessResponse ? allowedActions.includes(DOC_DELETE_ACTION) : true;
+        const canShare = accessResponse ? accessResponse.access.can_share === true : true;
+
+        setSelectedDocument(documentResponse.document);
+        setDraftTitle(documentResponse.document.title);
+        setDraftContent(documentResponse.document.content);
         setIsCreatingNew(false);
         setIsDirty(false);
         setConflictDocument(null);
-        setStatusMessage('All changes saved');
+        setReadOnlyReason(
+          canEdit ? null : 'You have view access to this document, but not edit access.'
+        );
+        setCanDeleteDocument(canDelete);
+        setCanShareDocument(canShare);
+        setStatusMessage(canEdit ? 'All changes saved' : 'Read-only access');
       } catch (error) {
         if (!cancelled) {
           setInlineError(getErrorMessage(error));
@@ -185,17 +267,34 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     return () => {
       cancelled = true;
     };
-  }, [http, selectedId]);
+  }, [http, selectedId, supportsSharing]);
 
-  async function saveDocument(silent?: boolean) {
-    if (isSaving) {
+  async function enterReadOnlyMode() {
+    if (!selectedId) {
       return;
     }
 
-    if (!draftTitle.trim()) {
-      if (!silent) {
-        notifications.toasts.addDanger('A document title is required.');
-      }
+    try {
+      const response = await getDocument(http, selectedId);
+      setSelectedDocument(response.document);
+      setDraftTitle(response.document.title);
+      setDraftContent(response.document.content);
+      setDocuments((current) => upsertSummary(current, response.document));
+    } catch (error) {
+      // If reload fails, keep the current document visible and still lock editing.
+    }
+
+    setConflictDocument(null);
+    setInlineError(null);
+    setIsDirty(false);
+    setReadOnlyReason('You have view access to this document, but not edit access.');
+    setCanDeleteDocument(false);
+    setCanShareDocument(false);
+    setStatusMessage('Read-only access');
+  }
+
+  async function saveDocument(silent?: boolean) {
+    if (isSaving || isReadOnly) {
       return;
     }
 
@@ -204,8 +303,9 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     setStatusMessage(selectedId ? 'Saving changes...' : 'Creating document...');
 
     try {
+      const resolvedTitle = draftTitle.trim() || 'Untitled document';
       const payload = {
-        title: draftTitle.trim(),
+        title: resolvedTitle,
         content: draftContent,
         ...(selectedDocument
           ? {
@@ -235,6 +335,15 @@ export function DocsApp({ coreStart }: DocsAppProps) {
         setConflictDocument((await getDocument(http, selectedId)).document);
         return;
       }
+      if (statusCode === 403 && selectedId) {
+        await enterReadOnlyMode();
+        if (!silent) {
+          notifications.toasts.addWarning(
+            'This document is view-only for your account. Editing has been disabled.'
+          );
+        }
+        return;
+      }
 
       const message = getErrorMessage(error);
       setInlineError(message);
@@ -248,7 +357,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   }
 
   useEffect(() => {
-    if (!selectedId || isDirty === false) {
+    if (!selectedId || isDirty === false || isReadOnly) {
       return;
     }
 
@@ -283,10 +392,10 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     return () => {
       window.clearInterval(interval);
     };
-  }, [http, isDirty, selectedDocument, selectedId]);
+  }, [http, isDirty, isReadOnly, selectedDocument, selectedId]);
 
   useEffect(() => {
-    if (isDirty === false || isSaving || !draftTitle.trim()) {
+    if (isDirty === false || isSaving || isReadOnly) {
       return;
     }
 
@@ -297,23 +406,40 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [draftContent, draftTitle, isDirty, isSaving, selectedDocument, selectedId]);
+  }, [draftContent, draftTitle, isDirty, isReadOnly, isSaving, selectedDocument, selectedId]);
 
   function startNewDocument() {
     setIsCreatingNew(true);
     setSelectedId(null);
     setSelectedDocument(null);
-    setDraftTitle('Untitled document');
+    setDraftTitle('');
     setDraftContent('');
     setConflictDocument(null);
     setInlineError(null);
+    setReadOnlyReason(null);
+    setCanDeleteDocument(true);
+    setCanShareDocument(true);
     setStatusMessage('New draft ready');
     setIsDirty(false);
   }
 
   function selectDocument(documentId: string) {
+    if (documentId === selectedId) {
+      return;
+    }
+
     setIsCreatingNew(false);
     setSelectedId(documentId);
+    setReadOnlyReason(null);
+    setCanDeleteDocument(true);
+    setCanShareDocument(true);
+  }
+
+  function handleTitleKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Tab' && !event.shiftKey) {
+      event.preventDefault();
+      composerRef.current?.focus();
+    }
   }
 
   function loadRemoteVersion() {
@@ -328,6 +454,56 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     setConflictDocument(null);
     setIsDirty(false);
     setStatusMessage('Loaded the latest version');
+  }
+
+  async function confirmDeleteDocument() {
+    if (!selectedDocument || isDeleting) {
+      return;
+    }
+
+    const documentToDelete = selectedDocument;
+    const remainingDocuments = documents.filter((document) => document.id !== documentToDelete.id);
+
+    setIsDeleting(true);
+    setInlineError(null);
+
+    try {
+      await deleteDocument(
+          http,
+          documentToDelete.id,
+          documentToDelete.seqNo,
+          documentToDelete.primaryTerm);
+
+      setDocuments(remainingDocuments);
+      setConflictDocument(null);
+      setIsDirty(false);
+      setIsDeleteModalVisible(false);
+      setReadOnlyReason(null);
+      setCanDeleteDocument(true);
+      setCanShareDocument(true);
+      notifications.toasts.addSuccess(`Deleted "${documentToDelete.title}".`);
+
+      if (remainingDocuments.length > 0) {
+        setSelectedDocument(null);
+        setSelectedId(remainingDocuments[0].id);
+        setIsCreatingNew(false);
+        setStatusMessage('Document deleted');
+        return;
+      }
+
+      setIsCreatingNew(true);
+      setSelectedId(null);
+      setSelectedDocument(null);
+      setDraftTitle('');
+      setDraftContent('');
+      setStatusMessage('Document deleted');
+    } catch (error) {
+      const message = getErrorMessage(error);
+      setInlineError(message);
+      notifications.toasts.addDanger(message);
+    } finally {
+      setIsDeleting(false);
+    }
   }
 
   return (
@@ -345,7 +521,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
             </EuiText>
           </EuiFlexItem>
           <EuiFlexItem grow={false}>
-            <EuiButton fill onClick={startNewDocument}>
+            <EuiButton fill iconType="plusInCircle" onClick={startNewDocument}>
               New document
             </EuiButton>
           </EuiFlexItem>
@@ -404,6 +580,9 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                   aria-label="Document title"
                   className="docsTitleInput"
                   value={draftTitle}
+                  placeholder="Untitled document"
+                  readOnly={isSwitchingDocuments || isReadOnly}
+                  onKeyDown={handleTitleKeyDown}
                   onChange={(event) => {
                     setDraftTitle(event.target.value);
                     setIsDirty(true);
@@ -441,7 +620,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
               <EuiFlexItem grow={false}>
                 <div className="docsStatusRow">
                   <EuiBadge color={isDirty ? 'warning' : 'secondary'}>
-                    {isDirty ? 'Unsaved changes' : 'Saved'}
+                    {isReadOnly ? 'Read only' : isDirty ? 'Unsaved changes' : 'Saved'}
                   </EuiBadge>
                   <span className="docsStatusText">
                     {statusMessage}
@@ -450,16 +629,45 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                 </div>
               </EuiFlexItem>
               <EuiFlexItem grow={false}>
-                <EuiButton
-                  fill
-                  size="s"
-                  isLoading={isSaving}
-                  onClick={() => {
-                    void saveDocument(false);
-                  }}
-                >
-                  {selectedId ? 'Save now' : 'Create document'}
-                </EuiButton>
+                <EuiFlexGroup gutterSize="s" alignItems="center" responsive={false}>
+                  {selectedDocument && supportsSharing ? (
+                    <EuiFlexItem grow={false}>
+                      <EuiButtonEmpty
+                        size="s"
+                        iconType="share"
+                        isDisabled={isReadOnly || canShareDocument === false}
+                        onClick={() => setIsShareModalVisible(true)}
+                      >
+                        Share
+                      </EuiButtonEmpty>
+                    </EuiFlexItem>
+                  ) : null}
+                  {selectedDocument ? (
+                    <EuiFlexItem grow={false}>
+                      <EuiButtonEmpty
+                        color="danger"
+                        size="s"
+                        isDisabled={isReadOnly || canDeleteDocument === false}
+                        onClick={() => setIsDeleteModalVisible(true)}
+                      >
+                        Delete
+                      </EuiButtonEmpty>
+                    </EuiFlexItem>
+                  ) : null}
+                  <EuiFlexItem grow={false}>
+                    <EuiButton
+                      fill
+                      size="s"
+                      isLoading={isSaving}
+                      isDisabled={isReadOnly}
+                      onClick={() => {
+                        void saveDocument(false);
+                      }}
+                    >
+                      {selectedId ? 'Save now' : 'Create document'}
+                    </EuiButton>
+                  </EuiFlexItem>
+                </EuiFlexGroup>
               </EuiFlexItem>
             </EuiFlexGroup>
 
@@ -490,45 +698,107 @@ export function DocsApp({ coreStart }: DocsAppProps) {
               </>
             ) : null}
 
+            {readOnlyReason ? (
+              <>
+                <EuiSpacer size="m" />
+                <EuiCallOut color="primary" iconType="lock" title={readOnlyReason}>
+                  <EuiText size="s">
+                    You can still read and preview this document, but save, delete, and sharing
+                    actions are disabled for this session.
+                  </EuiText>
+                </EuiCallOut>
+              </>
+            ) : null}
+
             <EuiSpacer size="m" />
 
-            {isLoadingDocument ? (
-              <div className="docsLoadingState">
-                <EuiLoadingSpinner size="xl" />
-              </div>
-            ) : (
-              <div className={`docsEditorShell docsEditorShell--${viewMode}`}>
-                {viewMode !== 'preview' ? (
-                  <section className="docsComposerPane">
-                    <EuiTextArea
-                      fullWidth
-                      className="docsComposer"
-                      value={draftContent}
-                      onChange={(event) => {
-                        setDraftContent(event.target.value);
-                        setIsDirty(true);
-                        setStatusMessage('Draft updated');
-                      }}
-                      aria-label="Document content"
-                    />
-                  </section>
-                ) : null}
+            <div className={`docsEditorShell docsEditorShell--${viewMode}`}>
+              {viewMode !== 'preview' ? (
+                <section className="docsComposerPane">
+                  <EuiTextArea
+                    fullWidth
+                    className="docsComposer"
+                    inputRef={composerRef}
+                    value={draftContent}
+                    readOnly={isSwitchingDocuments || isReadOnly}
+                    placeholder="Start writing..."
+                    onChange={(event) => {
+                      setDraftContent(event.target.value);
+                      setIsDirty(true);
+                      setStatusMessage('Draft updated');
+                    }}
+                    aria-label="Document content"
+                  />
+                </section>
+              ) : null}
 
-                {viewMode !== 'write' ? (
-                  <section className="docsPreviewPane">
-                    <div className="docsPreviewHeader">Preview</div>
-                    <div className="docsPreviewBody">
-                      <EuiMarkdownFormat>
-                        {draftContent || '_Nothing to preview yet. Start writing in markdown-ish text._'}
-                      </EuiMarkdownFormat>
-                    </div>
-                  </section>
-                ) : null}
-              </div>
-            )}
+              {viewMode !== 'write' ? (
+                <section className="docsPreviewPane">
+                  <div className="docsPreviewHeader">Preview</div>
+                  <div className="docsPreviewBody">
+                    <EuiMarkdownFormat>
+                      {draftContent || '_Nothing to preview yet. Start writing in markdown-ish text._'}
+                    </EuiMarkdownFormat>
+                  </div>
+                </section>
+              ) : null}
+
+              {showSwitchOverlay ? (
+                <div className="docsEditorOverlay" aria-live="polite">
+                  <EuiLoadingSpinner size="l" />
+                  <span>Opening document...</span>
+                </div>
+              ) : null}
+              {isLoadingDocument && !isSwitchingDocuments ? (
+                <div className="docsLoadingState">
+                  <EuiLoadingSpinner size="xl" />
+                </div>
+              ) : null}
+            </div>
           </EuiPanel>
         </main>
       </div>
+
+      {isDeleteModalVisible && selectedDocument ? (
+        <EuiConfirmModal
+          title="Delete document?"
+          onCancel={() => {
+            if (!isDeleting) {
+              setIsDeleteModalVisible(false);
+            }
+          }}
+          onConfirm={() => {
+            void confirmDeleteDocument();
+          }}
+          cancelButtonText="Keep document"
+          confirmButtonText={isDeleting ? 'Deleting...' : 'Delete document'}
+          buttonColor="danger"
+          defaultFocusedButton="confirm"
+        >
+          <EuiText size="s">
+            This removes <strong>{selectedDocument.title}</strong> from the docs app. The backend
+            uses soft delete now, so we can preserve the record for follow-up recovery work.
+          </EuiText>
+        </EuiConfirmModal>
+      ) : null}
+
+      {isShareModalVisible && selectedDocument ? (
+        <ShareModal
+          http={http}
+          isOpen={isShareModalVisible}
+          resourceId={selectedDocument.id}
+          resourceName={selectedDocument.title}
+          resourceType={DOC_RESOURCE_TYPE}
+          accessLevels={shareAccessLevels}
+          onClose={() => setIsShareModalVisible(false)}
+          onSave={(generalAccess) => {
+            const label = generalAccess ? generalAccess.replace(/^docs_/, '').replace(/_/g, ' ') : 'private';
+            notifications.toasts.addSuccess(
+              `Updated sharing for "${selectedDocument.title}" to ${label}.`
+            );
+          }}
+        />
+      ) : null}
     </div>
   );
 }

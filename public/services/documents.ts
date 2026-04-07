@@ -6,6 +6,7 @@
 import { HttpStart } from '../../../../src/core/public';
 import {
   DASHBOARDS_DOCS_API_BASE,
+  DeleteDocumentResponse,
   GetDocumentResponse,
   ListDocumentsResponse,
   UpsertDocumentPayload,
@@ -46,5 +47,19 @@ export async function updateDocument(
 ): Promise<UpsertDocumentResponse> {
   return http.post<UpsertDocumentResponse>(`${DASHBOARDS_DOCS_API_BASE}/documents/${documentId}`, {
     body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteDocument(
+  http: HttpStart,
+  documentId: string,
+  seqNo: number,
+  primaryTerm: number
+): Promise<DeleteDocumentResponse> {
+  return http.delete<DeleteDocumentResponse>(`${DASHBOARDS_DOCS_API_BASE}/documents/${documentId}`, {
+    query: {
+      seqNo,
+      primaryTerm,
+    },
   });
 }

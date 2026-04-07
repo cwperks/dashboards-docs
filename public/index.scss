@@ -61,14 +61,13 @@
   border-radius: 18px;
   background: rgba(255, 250, 241, 0.9);
   text-align: left;
-  transition: border-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+  transition: border-color 120ms ease, background-color 120ms ease;
 }
 
 .docsSidebarItem:hover,
 .docsSidebarItem:focus {
   border-color: var(--docs-accent);
-  transform: translateY(-1px);
-  box-shadow: 0 10px 30px rgba(141, 59, 16, 0.08);
+  background: rgba(255, 245, 225, 0.96);
 }
 
 .docsSidebarItem--active {
@@ -90,7 +89,8 @@
 }
 
 .docsSidebarEmpty,
-.docsLoadingState {
+.docsLoadingState,
+.docsShareModalLoading {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -105,6 +105,11 @@
   font-size: 28px;
   font-weight: 700;
   color: var(--docs-ink);
+}
+
+.docsTitleInput .euiFieldText::placeholder {
+  color: rgba(111, 98, 79, 0.72);
+  font-weight: 600;
 }
 
 .docsTitleInput .euiFieldText:focus {
@@ -141,6 +146,7 @@
 }
 
 .docsEditorShell {
+  position: relative;
   display: grid;
   gap: 16px;
   height: calc(100% - 150px);
@@ -198,6 +204,21 @@
   height: calc(100% - 45px);
   overflow: auto;
   padding: 22px;
+}
+
+.docsEditorOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 20px;
+  background: rgba(255, 253, 248, 0.72);
+  color: var(--docs-muted);
+  font-size: 13px;
+  font-weight: 700;
+  backdrop-filter: blur(4px);
 }
 
 @media (max-width: 1100px) {
