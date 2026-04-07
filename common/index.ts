@@ -108,6 +108,41 @@ export interface ResourceAccessResponse {
   access: ResourceAccessInfo;
 }
 
+export interface CollaborationReplaceOperation {
+  baseVersion: number;
+  start: number;
+  end: number;
+  text: string;
+}
+
+export interface CollaborationParticipant {
+  session_id: string;
+  user_name: string;
+  color: string;
+  selection_start: number | null;
+  selection_end: number | null;
+  is_self?: boolean;
+}
+
+export interface CollaborationJoinResponse {
+  document_id: string;
+  session_id: string;
+  content: string;
+  version: number;
+  participants: CollaborationParticipant[];
+  can_edit: boolean;
+  coordinator_session_id: string | null;
+}
+
+export interface CollaborationSyncResponse {
+  document_id: string;
+  content: string;
+  version: number;
+  participants: CollaborationParticipant[];
+  can_edit: boolean;
+  coordinator_session_id: string | null;
+}
+
 export const EMPTY_RESOURCE_SHARING_CONFIG: ResourceSharingConfig = {
   enabled: false,
   types: [],

@@ -122,6 +122,59 @@
   gap: 10px;
 }
 
+.docsStatusStack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.docsPresenceRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.docsPresenceText {
+  color: var(--docs-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.docsPresenceAvatars {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.docsPresenceAvatar {
+  box-shadow: inset 0 0 0 2px white;
+}
+
+.docsPresenceAvatar--coral {
+  background: #d3603d;
+}
+
+.docsPresenceAvatar--amber {
+  background: #cb8e1a;
+}
+
+.docsPresenceAvatar--teal {
+  background: #0f8b82;
+}
+
+.docsPresenceAvatar--blue {
+  background: #2f6ed6;
+}
+
+.docsPresenceAvatar--violet {
+  background: #7d54d8;
+}
+
+.docsPresenceAvatar--mint {
+  background: #198a65;
+}
+
 .docsModeSwitch {
   display: inline-flex;
   gap: 6px;
@@ -172,22 +225,130 @@
 }
 
 .docsComposer {
+  position: relative;
   height: 100%;
 }
 
-.docsComposer .euiTextArea {
-  height: 100%;
-  min-height: 420px;
-  border: none;
-  box-shadow: none;
-  resize: none;
-  padding: 22px;
-  font-size: 15px;
-  line-height: 1.7;
+.docsComposer .react-monaco-editor-container,
+.docsComposer .monaco-editor,
+.docsComposer .overflow-guard {
+  height: 100% !important;
 }
 
-.docsComposer .euiTextArea:focus {
-  box-shadow: inset 0 0 0 2px rgba(199, 105, 45, 0.25);
+.docsComposer .monaco-editor,
+.docsComposer .monaco-editor-background {
+  background: transparent !important;
+}
+
+.docsComposer .monaco-editor .margin,
+.docsComposer .monaco-editor .monaco-editor-background {
+  background: transparent !important;
+}
+
+.docsComposer .view-lines {
+  font-feature-settings: 'liga' 0;
+}
+
+.docsComposerPlaceholder {
+  position: absolute;
+  top: 20px;
+  left: 20px;
+  z-index: 2;
+  pointer-events: none;
+  color: rgba(111, 98, 79, 0.72);
+  font-size: 14px;
+}
+
+.docsRemoteSelection--coral {
+  background: rgba(211, 96, 61, 0.18);
+}
+
+.docsRemoteSelection--amber {
+  background: rgba(203, 142, 26, 0.18);
+}
+
+.docsRemoteSelection--teal {
+  background: rgba(15, 139, 130, 0.18);
+}
+
+.docsRemoteSelection--blue {
+  background: rgba(47, 110, 214, 0.18);
+}
+
+.docsRemoteSelection--violet {
+  background: rgba(125, 84, 216, 0.18);
+}
+
+.docsRemoteSelection--mint {
+  background: rgba(25, 138, 101, 0.18);
+}
+
+.docsRemoteCursorMarker {
+  display: inline-block;
+  width: 0;
+  margin-left: -1px;
+  border-left: 2px solid transparent;
+  height: 1.4em;
+}
+
+.docsRemoteCursorMarker--coral {
+  border-left-color: #d3603d;
+}
+
+.docsRemoteCursorMarker--amber {
+  border-left-color: #cb8e1a;
+}
+
+.docsRemoteCursorMarker--teal {
+  border-left-color: #0f8b82;
+}
+
+.docsRemoteCursorMarker--blue {
+  border-left-color: #2f6ed6;
+}
+
+.docsRemoteCursorMarker--violet {
+  border-left-color: #7d54d8;
+}
+
+.docsRemoteCursorMarker--mint {
+  border-left-color: #198a65;
+}
+
+.docsRemoteCursorLabel {
+  display: inline-block;
+  margin-left: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  vertical-align: middle;
+}
+
+.docsRemoteCursorLabel--coral {
+  background: #d3603d;
+}
+
+.docsRemoteCursorLabel--amber {
+  background: #cb8e1a;
+}
+
+.docsRemoteCursorLabel--teal {
+  background: #0f8b82;
+}
+
+.docsRemoteCursorLabel--blue {
+  background: #2f6ed6;
+}
+
+.docsRemoteCursorLabel--violet {
+  background: #7d54d8;
+}
+
+.docsRemoteCursorLabel--mint {
+  background: #198a65;
 }
 
 .docsPreviewHeader {
