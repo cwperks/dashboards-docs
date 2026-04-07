@@ -56,10 +56,13 @@ export async function deleteDocument(
   seqNo: number,
   primaryTerm: number
 ): Promise<DeleteDocumentResponse> {
-  return http.delete<DeleteDocumentResponse>(`${DASHBOARDS_DOCS_API_BASE}/documents/${documentId}`, {
-    query: {
-      seqNo,
-      primaryTerm,
-    },
-  });
+  return http.delete<DeleteDocumentResponse>(
+    `${DASHBOARDS_DOCS_API_BASE}/documents/${documentId}`,
+    {
+      query: {
+        seqNo,
+        primaryTerm,
+      },
+    }
+  );
 }

@@ -8,6 +8,7 @@ export const PLUGIN_NAME = 'Docs';
 export const DASHBOARDS_DOCS_API_BASE = '/api/_plugins/_dashboards_docs';
 export const OPENSEARCH_DOCS_API_BASE = '/_plugins/_docs';
 export const DOC_RESOURCE_TYPE = 'docs-document';
+export const FOLDER_RESOURCE_TYPE = 'docs-folder';
 export const DOC_GET_ACTION = 'docs:document/get';
 export const DOC_UPSERT_ACTION = 'docs:document/upsert';
 export const DOC_DELETE_ACTION = 'docs:document/delete';
@@ -16,7 +17,8 @@ export const RESOURCE_SHARE_ACTION = 'cluster:admin/security/resource/share';
 export interface DocumentSummary {
   id: string;
   title: string;
-  folder: string;
+  folderId: string;
+  folderPath: string;
   excerpt: string;
   lastUpdatedBy: string;
   updatedAt: number;
@@ -41,7 +43,7 @@ export interface GetDocumentResponse {
 export interface UpsertDocumentPayload {
   title: string;
   content: string;
-  folder?: string | null;
+  folderId?: string | null;
   seqNo?: number;
   primaryTerm?: number;
 }
@@ -54,6 +56,52 @@ export interface UpsertDocumentResponse {
 export interface DeleteDocumentResponse {
   deleted: boolean;
   documentId: string;
+}
+
+export interface FolderSummary {
+  id: string;
+  name: string;
+  path: string;
+  parentId: string;
+  lastUpdatedBy: string;
+  updatedAt: number;
+  seqNo: number;
+  primaryTerm: number;
+}
+
+export interface FolderRecord extends FolderSummary {
+  resourceType: string;
+  allSharedPrincipals: string[];
+  owner: string;
+  createdAt: number;
+  isDeleted: boolean;
+  deletedAt: number;
+  deletedBy: string;
+}
+
+export interface ListFoldersResponse {
+  folders: FolderSummary[];
+}
+
+export interface GetFolderResponse {
+  folder: FolderRecord;
+}
+
+export interface UpsertFolderPayload {
+  name: string;
+  parentId?: string | null;
+  seqNo?: number;
+  primaryTerm?: number;
+}
+
+export interface UpsertFolderResponse {
+  created: boolean;
+  folder: FolderRecord;
+}
+
+export interface DeleteFolderResponse {
+  deleted: boolean;
+  folderId: string;
 }
 
 export interface ResourceSharingTypeEntry {

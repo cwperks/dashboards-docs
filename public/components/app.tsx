@@ -15,6 +15,7 @@ import {
   EuiFieldText,
   EuiFlexGroup,
   EuiFlexItem,
+  EuiIcon,
   EuiLoadingSpinner,
   EuiMarkdownFormat,
   EuiModal,
@@ -42,6 +43,7 @@ import {
   DocumentRecord,
   DocumentSummary,
   EMPTY_RESOURCE_SHARING_CONFIG,
+  FolderSummary,
   getAccessLevelsForType,
   PLUGIN_NAME,
   supportsResourceSharingForType,
@@ -53,6 +55,7 @@ import {
   listDocuments,
   updateDocument,
 } from '../services/documents';
+import { createFolder, listFolders } from '../services/folders';
 import {
   joinCollaborationSession,
   leaveCollaborationSession,
@@ -67,46 +70,94 @@ interface DocsAppProps {
   coreStart: CoreStart;
 }
 
-interface FolderSection {
-  key: string;
-  label: string;
+interface FolderTreeNode {
+  id: string;
+  name: string;
+  path: string;
+  parentId: string;
+  depth: number;
   documents: DocumentSummary[];
+  children: FolderTreeNode[];
+}
+
+interface FolderTree {
+  ungroupedDocuments: DocumentSummary[];
+  rootFolders: FolderTreeNode[];
 }
 
 function normalizeFolderName(value: string | null | undefined): string {
-  return value?.trim() ?? '';
+  if (!value) {
+    return '';
+  }
+
+  return value
+    .split('/')
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)
+    .join('/');
 }
 
-function buildFolderSections(documents: DocumentSummary[]): FolderSection[] {
-  const byFolder = new Map<string, DocumentSummary[]>();
+function buildFolderTree(folders: FolderSummary[], documents: DocumentSummary[]): FolderTree {
+  const ungroupedDocuments: DocumentSummary[] = [];
+  const rootFolders: FolderTreeNode[] = [];
+  const nodesById = new Map<string, FolderTreeNode>();
+
+  folders.forEach((folder) => {
+    nodesById.set(folder.id, {
+      id: folder.id,
+      name: folder.name,
+      path: folder.path,
+      parentId: folder.parentId,
+      depth: Math.max(folder.path.split('/').length - 1, 0),
+      documents: [],
+      children: [],
+    });
+  });
+
+  folders.forEach((folder) => {
+    const node = nodesById.get(folder.id);
+    if (!node) {
+      return;
+    }
+
+    if (folder.parentId) {
+      const parentNode = nodesById.get(folder.parentId);
+      if (parentNode) {
+        parentNode.children.push(node);
+        return;
+      }
+    }
+
+    rootFolders.push(node);
+  });
 
   documents.forEach((document) => {
-    const folder = normalizeFolderName(document.folder);
-    const current = byFolder.get(folder) ?? [];
-    current.push(document);
-    byFolder.set(folder, current);
+    if (!document.folderId) {
+      ungroupedDocuments.push(document);
+      return;
+    }
+
+    const folderNode = nodesById.get(document.folderId);
+    if (!folderNode) {
+      ungroupedDocuments.push(document);
+      return;
+    }
+
+    folderNode.documents.push(document);
   });
 
-  const sections: FolderSection[] = [];
-  const ungroupedDocuments = byFolder.get('') ?? [];
-  sections.push({
-    key: 'ungrouped',
-    label: 'Ungrouped',
-    documents: ungroupedDocuments,
-  });
+  function sortNode(node: FolderTreeNode) {
+    node.children.sort((left, right) => left.name.localeCompare(right.name));
+    node.children.forEach(sortNode);
+  }
 
-  Array.from(byFolder.keys())
-      .filter((folder) => folder !== '')
-      .sort((left, right) => left.localeCompare(right))
-      .forEach((folder) => {
-        sections.push({
-          key: folder,
-          label: folder,
-          documents: byFolder.get(folder) ?? [],
-        });
-      });
+  rootFolders.sort((left, right) => left.name.localeCompare(right.name));
+  rootFolders.forEach(sortNode);
 
-  return sections.filter((section) => section.documents.length > 0);
+  return {
+    ungroupedDocuments,
+    rootFolders,
+  };
 }
 
 function upsertSummary(documents: DocumentSummary[], document: DocumentRecord): DocumentSummary[] {
@@ -114,7 +165,8 @@ function upsertSummary(documents: DocumentSummary[], document: DocumentRecord): 
   const nextSummary: DocumentSummary = {
     id: document.id,
     title: document.title,
-    folder: document.folder,
+    folderId: document.folderId,
+    folderPath: document.folderPath,
     excerpt: normalizedExcerpt.slice(0, 180) + (normalizedExcerpt.length > 180 ? '...' : ''),
     lastUpdatedBy: document.lastUpdatedBy,
     updatedAt: document.updatedAt,
@@ -124,6 +176,11 @@ function upsertSummary(documents: DocumentSummary[], document: DocumentRecord): 
 
   const filtered = documents.filter((item) => item.id !== document.id);
   return [nextSummary, ...filtered].sort((left, right) => right.updatedAt - left.updatedAt);
+}
+
+function upsertFolderSummary(folders: FolderSummary[], folder: FolderSummary): FolderSummary[] {
+  const filtered = folders.filter((item) => item.id !== folder.id);
+  return [...filtered, folder].sort((left, right) => left.path.localeCompare(right.path));
 }
 
 function formatTimestamp(value: number): string {
@@ -159,20 +216,16 @@ function hasUnsavedChanges(
   persistedDocument: DocumentRecord | null,
   draftTitle: string,
   draftContent: string,
-  draftFolder: string
+  draftFolderId: string
 ): boolean {
   if (!persistedDocument) {
-    return (
-      draftTitle.trim().length > 0 ||
-      draftContent.length > 0 ||
-      normalizeFolderName(draftFolder).length > 0
-    );
+    return draftTitle.trim().length > 0 || draftContent.length > 0 || draftFolderId.length > 0;
   }
 
   return (
     draftTitle !== persistedDocument.title ||
     draftContent !== persistedDocument.content ||
-    normalizeFolderName(draftFolder) !== normalizeFolderName(persistedDocument.folder)
+    draftFolderId !== persistedDocument.folderId
   );
 }
 
@@ -277,12 +330,14 @@ function replaceEditorContent(
 
 export function DocsApp({ coreStart }: DocsAppProps) {
   const { chrome, http, notifications } = coreStart;
+  const [folders, setFolders] = useState<FolderSummary[]>([]);
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedDocument, setSelectedDocument] = useState<DocumentRecord | null>(null);
   const [draftTitle, setDraftTitle] = useState('');
   const [draftContent, setDraftContent] = useState('');
   const [draftFolder, setDraftFolder] = useState('');
+  const [draftFolderId, setDraftFolderId] = useState('');
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('split');
   const [isLoadingList, setIsLoadingList] = useState(true);
@@ -296,6 +351,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   const [isMoveModalVisible, setIsMoveModalVisible] = useState(false);
   const [isShareModalVisible, setIsShareModalVisible] = useState(false);
   const [moveFolderValue, setMoveFolderValue] = useState('');
+  const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
   const [showSwitchOverlay, setShowSwitchOverlay] = useState(false);
   const [statusMessage, setStatusMessage] = useState('Ready to write');
   const [conflictDocument, setConflictDocument] = useState<DocumentRecord | null>(null);
@@ -329,10 +385,21 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   const canPersistCurrentDocument =
     selectedDocument === null || collaborationSessionId === null || isCollaborationCoordinator;
   const titleIsReadOnly = isSwitchingDocuments || isReadOnly || canPersistCurrentDocument === false;
-  const folderSections = buildFolderSections(documents);
-  const existingFolderNames = folderSections
-    .map((section) => section.label)
-    .filter((label) => label !== 'Ungrouped');
+  const folderTree = buildFolderTree(folders, documents);
+  const existingFolderNames = Array.from(
+    new Set(folders.map((folder) => normalizeFolderName(folder.path)).filter((name) => name.length > 0))
+  ).sort((left, right) => left.localeCompare(right));
+
+  function isFolderExpanded(path: string): boolean {
+    return expandedFolders[path] ?? true;
+  }
+
+  function toggleFolderExpanded(path: string) {
+    setExpandedFolders((current) => ({
+      ...current,
+      [path]: !(current[path] ?? true),
+    }));
+  }
 
   function applyCollaborationState(payload: {
     content: string;
@@ -454,8 +521,31 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   }, [http]);
 
   useEffect(() => {
-    setIsDirty(hasUnsavedChanges(selectedDocument, draftTitle, draftContent, draftFolder));
-  }, [draftContent, draftFolder, draftTitle, selectedDocument]);
+    let cancelled = false;
+
+    async function loadFolderList() {
+      try {
+        const response = await listFolders(http);
+        if (!cancelled) {
+          setFolders(response.folders);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setInlineError(getErrorMessage(error));
+        }
+      }
+    }
+
+    void loadFolderList();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [http]);
+
+  useEffect(() => {
+    setIsDirty(hasUnsavedChanges(selectedDocument, draftTitle, draftContent, draftFolderId));
+  }, [draftContent, draftFolderId, draftTitle, selectedDocument]);
 
   useEffect(() => {
     let cancelled = false;
@@ -543,7 +633,8 @@ export function DocsApp({ coreStart }: DocsAppProps) {
         setSelectedDocument(documentResponse.document);
         setDraftTitle(documentResponse.document.title);
         setDraftContent(documentResponse.document.content);
-        setDraftFolder(documentResponse.document.folder);
+        setDraftFolder(documentResponse.document.folderPath);
+        setDraftFolderId(documentResponse.document.folderId);
         draftContentRef.current = documentResponse.document.content;
         serverShadowContentRef.current = documentResponse.document.content;
         serverVersionRef.current = 0;
@@ -553,7 +644,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
           canEdit ? null : 'You have view access to this document, but not edit access.'
         );
         setCanDeleteDocument(canDelete);
-        setCanShareDocument(canShare);
+        setCanShareDocument(canShare && !documentResponse.document.folderId);
         setStatusMessage(canEdit ? 'All changes saved' : 'Read-only access');
       } catch (error) {
         if (!cancelled) {
@@ -766,8 +857,9 @@ export function DocsApp({ coreStart }: DocsAppProps) {
           if (latestDocument.title !== draftTitle && canPersistCurrentDocument === false) {
             setDraftTitle(latestDocument.title);
           }
-          if (latestDocument.folder !== draftFolder && canPersistCurrentDocument === false) {
-            setDraftFolder(latestDocument.folder);
+          if (latestDocument.folderPath !== draftFolder && canPersistCurrentDocument === false) {
+            setDraftFolder(latestDocument.folderPath);
+            setDraftFolderId(latestDocument.folderId);
           }
 
           if (
@@ -775,7 +867,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
               latestDocument,
               draftTitle,
               draftContentRef.current,
-              draftFolder
+              draftFolderId
             ) === false
           ) {
             setStatusMessage('All changes saved');
@@ -794,6 +886,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     canPersistCurrentDocument,
     collaborationSessionId,
     draftFolder,
+    draftFolderId,
     draftTitle,
     http,
     selectedDocument,
@@ -888,7 +981,8 @@ export function DocsApp({ coreStart }: DocsAppProps) {
 
         setSelectedDocument(response.document);
         setDraftTitle(response.document.title);
-        setDraftFolder(response.document.folder);
+        setDraftFolder(response.document.folderPath);
+        setDraftFolderId(response.document.folderId);
         applyRemoteContent(response.document.content);
         setStatusMessage('Document refreshed');
       } catch (error) {
@@ -921,6 +1015,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     canPersistCurrentDocument,
     draftContent,
     draftFolder,
+    draftFolderId,
     draftTitle,
     isDirty,
     isReadOnly,
@@ -937,7 +1032,8 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       const response = await getDocument(http, selectedId);
       setSelectedDocument(response.document);
       setDraftTitle(response.document.title);
-      setDraftFolder(response.document.folder);
+      setDraftFolder(response.document.folderPath);
+      setDraftFolderId(response.document.folderId);
       applyRemoteContent(response.document.content);
       serverShadowContentRef.current = response.document.content;
       setDocuments((current) => upsertSummary(current, response.document));
@@ -976,7 +1072,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       const payload = {
         title: resolvedTitle,
         content: draftContentRef.current,
-        folder: normalizeFolderName(draftFolder) || null,
+        folderId: draftFolderId || null,
         ...(selectedDocument
           ? {
               seqNo: selectedDocument.seqNo,
@@ -992,7 +1088,8 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       setSelectedId(response.document.id);
       setSelectedDocument(response.document);
       setDraftTitle(response.document.title);
-      setDraftFolder(response.document.folder);
+      setDraftFolder(response.document.folderPath);
+      setDraftFolderId(response.document.folderId);
       applyRemoteContent(response.document.content);
       serverShadowContentRef.current = response.document.content;
       setIsCreatingNew(false);
@@ -1008,11 +1105,12 @@ export function DocsApp({ coreStart }: DocsAppProps) {
           if (
             latestDocument.content === serverShadowContentRef.current &&
             latestDocument.title === draftTitle &&
-            normalizeFolderName(latestDocument.folder) === normalizeFolderName(draftFolder)
+            latestDocument.folderId === draftFolderId
           ) {
             setSelectedDocument(latestDocument);
             setDocuments((current) => upsertSummary(current, latestDocument));
-            setDraftFolder(latestDocument.folder);
+            setDraftFolder(latestDocument.folderPath);
+            setDraftFolderId(latestDocument.folderId);
             setConflictDocument(null);
             setStatusMessage('Live session caught up to the latest saved version');
             return;
@@ -1051,6 +1149,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     setDraftTitle('');
     setDraftContent('');
     setDraftFolder('');
+    setDraftFolderId('');
     draftContentRef.current = '';
     serverShadowContentRef.current = '';
     serverVersionRef.current = 0;
@@ -1091,7 +1190,8 @@ export function DocsApp({ coreStart }: DocsAppProps) {
 
     setSelectedDocument(conflictDocument);
     setDraftTitle(conflictDocument.title);
-    setDraftFolder(conflictDocument.folder);
+    setDraftFolder(conflictDocument.folderPath);
+    setDraftFolderId(conflictDocument.folderId);
     applyRemoteContent(conflictDocument.content);
     serverShadowContentRef.current = conflictDocument.content;
     setDocuments((current) => upsertSummary(current, conflictDocument));
@@ -1108,6 +1208,42 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     setIsMoveModalVisible(true);
   }
 
+  async function resolveOrCreateFolderPath(targetPath: string): Promise<FolderSummary | null> {
+    const normalizedPath = normalizeFolderName(targetPath);
+    if (!normalizedPath) {
+      return null;
+    }
+
+    let knownFolders = [...folders];
+    let parentId = '';
+    let currentPath = '';
+    let currentFolder: FolderSummary | null = null;
+
+    for (const segment of normalizedPath.split('/')) {
+      const nextPath = currentPath ? `${currentPath}/${segment}` : segment;
+      let nextFolder =
+        knownFolders.find(
+          (folder) => folder.path === nextPath && (folder.parentId || '') === parentId
+        ) ?? null;
+
+      if (!nextFolder) {
+        const response = await createFolder(http, {
+          name: segment,
+          parentId: parentId || null,
+        });
+        nextFolder = response.folder;
+        knownFolders = upsertFolderSummary(knownFolders, nextFolder);
+        setFolders((current) => upsertFolderSummary(current, nextFolder!));
+      }
+
+      currentFolder = nextFolder;
+      parentId = nextFolder.id;
+      currentPath = nextFolder.path;
+    }
+
+    return currentFolder;
+  }
+
   async function confirmMoveDocument() {
     if (!selectedDocument || isMovingDocument || isReadOnly) {
       return;
@@ -1117,28 +1253,31 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     setInlineError(null);
 
     try {
-      const nextFolder = normalizeFolderName(moveFolderValue);
+      const nextFolderPath = normalizeFolderName(moveFolderValue);
+      const nextFolder = await resolveOrCreateFolderPath(nextFolderPath);
       const response = await updateDocument(http, selectedDocument.id, {
         title: draftTitle.trim() || 'Untitled document',
         content: draftContentRef.current,
-        folder: nextFolder || null,
+        folderId: nextFolder?.id ?? null,
         seqNo: selectedDocument.seqNo,
         primaryTerm: selectedDocument.primaryTerm,
       });
 
       setSelectedDocument(response.document);
       setDraftTitle(response.document.title);
-      setDraftFolder(response.document.folder);
+      setDraftFolder(response.document.folderPath);
+      setDraftFolderId(response.document.folderId);
       applyRemoteContent(response.document.content);
       serverShadowContentRef.current = response.document.content;
       setDocuments((current) => upsertSummary(current, response.document));
       setIsMoveModalVisible(false);
-      setMoveFolderValue(response.document.folder);
+      setMoveFolderValue(response.document.folderPath);
       setConflictDocument(null);
-      setStatusMessage(response.document.folder ? 'Moved to folder' : 'Moved back to Ungrouped');
+      setCanShareDocument(!response.document.folderId);
+      setStatusMessage(response.document.folderPath ? 'Moved to folder' : 'Moved back to Ungrouped');
       notifications.toasts.addSuccess(
-        response.document.folder
-          ? `Moved "${response.document.title}" to "${response.document.folder}".`
+        response.document.folderPath
+          ? `Moved "${response.document.title}" to "${response.document.folderPath}".`
           : `Moved "${response.document.title}" to Ungrouped.`
       );
     } catch (error) {
@@ -1200,6 +1339,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       setDraftTitle('');
       setDraftContent('');
       setDraftFolder('');
+      setDraftFolderId('');
       draftContentRef.current = '';
       setStatusMessage('Document deleted');
     } catch (error) {
@@ -1227,6 +1367,57 @@ export function DocsApp({ coreStart }: DocsAppProps) {
         );
       }
     });
+  }
+
+  function renderSidebarDocument(document: DocumentSummary, depth: number) {
+    return (
+      <button
+        key={document.id}
+        className={`docsSidebarItem ${
+          document.id === selectedId ? 'docsSidebarItem--active' : ''
+        }`}
+        onClick={() => selectDocument(document.id)}
+        style={{ marginLeft: `${depth * 18}px` }}
+      >
+        <span className="docsSidebarItemTitle">{document.title}</span>
+        <span className="docsSidebarItemMeta">
+          {document.lastUpdatedBy || 'unknown'} · {formatTimestamp(document.updatedAt)}
+        </span>
+        <span className="docsSidebarItemExcerpt">{document.excerpt || 'No preview yet'}</span>
+      </button>
+    );
+  }
+
+  function renderFolderNode(node: FolderTreeNode) {
+    const expanded = isFolderExpanded(node.path);
+
+    return (
+      <div key={node.path} className="docsSidebarTreeBranch">
+        <button
+          type="button"
+          className="docsSidebarFolderRow"
+          style={{ marginLeft: `${node.depth * 18}px` }}
+          onClick={() => toggleFolderExpanded(node.path)}
+        >
+          <EuiIcon
+            type={expanded ? 'arrowDown' : 'arrowRight'}
+            size="s"
+            className="docsSidebarFolderChevron"
+          />
+          <EuiIcon type="folderClosed" size="s" className="docsSidebarFolderIcon" />
+          <span className="docsSidebarFolderLabel">{node.name}</span>
+          <span className="docsSidebarFolderCount">
+            {node.documents.length + node.children.length}
+          </span>
+        </button>
+        {expanded ? (
+          <div className="docsSidebarTreeChildren">
+            {node.documents.map((document) => renderSidebarDocument(document, node.depth + 1))}
+            {node.children.map((childNode) => renderFolderNode(childNode))}
+          </div>
+        ) : null}
+      </div>
+    );
   }
 
   return (
@@ -1275,30 +1466,22 @@ export function DocsApp({ coreStart }: DocsAppProps) {
               </div>
             ) : null}
             <div className="docsSidebarList">
-              {folderSections.map((section) => (
-                <div key={section.key} className="docsSidebarSection">
-                  <div className="docsSidebarSectionLabel">{section.label}</div>
+              {folderTree.ungroupedDocuments.length > 0 ? (
+                <div className="docsSidebarSection">
+                  <div className="docsSidebarSectionLabel">Ungrouped</div>
                   <div className="docsSidebarSectionItems">
-                    {section.documents.map((document) => (
-                      <button
-                        key={document.id}
-                        className={`docsSidebarItem ${
-                          document.id === selectedId ? 'docsSidebarItem--active' : ''
-                        }`}
-                        onClick={() => selectDocument(document.id)}
-                      >
-                        <span className="docsSidebarItemTitle">{document.title}</span>
-                        <span className="docsSidebarItemMeta">
-                          {document.lastUpdatedBy || 'unknown'} · {formatTimestamp(document.updatedAt)}
-                        </span>
-                        <span className="docsSidebarItemExcerpt">
-                          {document.excerpt || 'No preview yet'}
-                        </span>
-                      </button>
-                    ))}
+                    {folderTree.ungroupedDocuments.map((document) =>
+                      renderSidebarDocument(document, 0)
+                    )}
                   </div>
                 </div>
-              ))}
+              ) : null}
+              {folderTree.rootFolders.length > 0 ? (
+                <div className="docsSidebarSection">
+                  <div className="docsSidebarSectionLabel">Folders</div>
+                  <div className="docsSidebarTree">{folderTree.rootFolders.map(renderFolderNode)}</div>
+                </div>
+              ) : null}
             </div>
           </EuiPanel>
         </aside>
@@ -1624,14 +1807,15 @@ export function DocsApp({ coreStart }: DocsAppProps) {
             <EuiModalBody>
               <EuiText size="s">
                 Move <strong>{selectedDocument.title}</strong> into a folder. Leave the field
-                blank to keep it ungrouped.
+                blank to keep it ungrouped, or use <code>/</code> to create nested folders like{' '}
+                <code>Team/Plans/Q2</code>.
               </EuiText>
               <EuiSpacer size="m" />
               <EuiFieldText
                 fullWidth
                 name="folderName"
                 value={moveFolderValue}
-                placeholder="Folder name"
+                placeholder="Folder path, e.g. Team/Plans/Q2"
                 onChange={(event) => setMoveFolderValue(event.target.value)}
                 disabled={isMovingDocument}
               />

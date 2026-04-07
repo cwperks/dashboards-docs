@@ -27,7 +27,14 @@ const SECURITY_AUTHINFO_API = '/_plugins/_security/authinfo';
 const upsertSchema = schema.object({
   title: schema.string({ minLength: 1 }),
   content: schema.string(),
-  folder: schema.maybe(schema.nullable(schema.string())),
+  folderId: schema.maybe(schema.nullable(schema.string())),
+  seqNo: schema.maybe(schema.number()),
+  primaryTerm: schema.maybe(schema.number()),
+});
+
+const upsertFolderSchema = schema.object({
+  name: schema.string({ minLength: 1 }),
+  parentId: schema.maybe(schema.nullable(schema.string())),
   seqNo: schema.maybe(schema.number()),
   primaryTerm: schema.maybe(schema.number()),
 });
@@ -259,6 +266,145 @@ export function defineRoutes(
         return response.ok({ body: result.body as DeleteDocumentResponse });
       } catch (error) {
         logger.warn(`Failed to delete doc ${request.params.documentId}: ${error}`);
+        return response.customError(getErrorPayload(error));
+      }
+    }
+  );
+
+  router.get(
+    {
+      path: `${DASHBOARDS_DOCS_API_BASE}/folders`,
+      validate: {
+        query: schema.object({
+          query: schema.maybe(schema.string()),
+          size: schema.maybe(schema.number({ min: 1, max: 500 })),
+        }),
+      },
+    },
+    async (context, request, response) => {
+      try {
+        const query = new URLSearchParams();
+        if (request.query.query) {
+          query.set('query', request.query.query);
+        }
+        if (request.query.size) {
+          query.set('size', String(request.query.size));
+        }
+
+        const result = await context.core.opensearch.client.asCurrentUser.transport.request({
+          method: 'GET',
+          path: `${OPENSEARCH_DOCS_API_BASE}/folders${query.toString() ? `?${query}` : ''}`,
+        });
+
+        return response.ok({ body: result.body });
+      } catch (error) {
+        logger.warn(`Failed to list folders: ${error}`);
+        return response.customError(getErrorPayload(error));
+      }
+    }
+  );
+
+  router.get(
+    {
+      path: `${DASHBOARDS_DOCS_API_BASE}/folders/{folderId}`,
+      validate: {
+        params: schema.object({
+          folderId: schema.string(),
+        }),
+      },
+    },
+    async (context, request, response) => {
+      try {
+        const result = await context.core.opensearch.client.asCurrentUser.transport.request({
+          method: 'GET',
+          path: `${OPENSEARCH_DOCS_API_BASE}/folders/${request.params.folderId}`,
+        });
+
+        return response.ok({ body: result.body });
+      } catch (error) {
+        logger.warn(`Failed to get folder ${request.params.folderId}: ${error}`);
+        return response.customError(getErrorPayload(error));
+      }
+    }
+  );
+
+  router.put(
+    {
+      path: `${DASHBOARDS_DOCS_API_BASE}/folders`,
+      validate: {
+        body: upsertFolderSchema,
+      },
+    },
+    async (context, request, response) => {
+      try {
+        const result = await context.core.opensearch.client.asCurrentUser.transport.request({
+          method: 'PUT',
+          path: `${OPENSEARCH_DOCS_API_BASE}/folders`,
+          body: request.body,
+        });
+
+        return response.ok({ body: result.body });
+      } catch (error) {
+        logger.warn(`Failed to create folder: ${error}`);
+        return response.customError(getErrorPayload(error));
+      }
+    }
+  );
+
+  router.post(
+    {
+      path: `${DASHBOARDS_DOCS_API_BASE}/folders/{folderId}`,
+      validate: {
+        params: schema.object({
+          folderId: schema.string(),
+        }),
+        body: upsertFolderSchema,
+      },
+    },
+    async (context, request, response) => {
+      try {
+        const result = await context.core.opensearch.client.asCurrentUser.transport.request({
+          method: 'POST',
+          path: `${OPENSEARCH_DOCS_API_BASE}/folders/${request.params.folderId}`,
+          body: request.body,
+        });
+
+        return response.ok({ body: result.body });
+      } catch (error) {
+        logger.warn(`Failed to update folder ${request.params.folderId}: ${error}`);
+        return response.customError(getErrorPayload(error));
+      }
+    }
+  );
+
+  router.delete(
+    {
+      path: `${DASHBOARDS_DOCS_API_BASE}/folders/{folderId}`,
+      validate: {
+        params: schema.object({
+          folderId: schema.string(),
+        }),
+        query: schema.object({
+          seqNo: schema.number(),
+          primaryTerm: schema.number(),
+        }),
+      },
+    },
+    async (context, request, response) => {
+      try {
+        const query = new URLSearchParams({
+          seqNo: String(request.query.seqNo),
+          primaryTerm: String(request.query.primaryTerm),
+        });
+
+        const result = await context.core.opensearch.client.asCurrentUser.transport.request({
+          method: 'DELETE',
+          path: `${OPENSEARCH_DOCS_API_BASE}/folders/${request.params.folderId}?${query}`,
+        });
+
+        return response.ok({ body: result.body });
+      } catch (error) {
+        logger.warn(`Failed to delete folder ${request.params.folderId}: ${error}`);
         return response.customError(getErrorPayload(error));
       }
     }
