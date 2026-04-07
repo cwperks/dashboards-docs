@@ -65,6 +65,9 @@
 }
 
 .docsSidebarSectionLabel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 0 6px;
   color: var(--docs-muted);
   font-size: 11px;
@@ -103,6 +106,117 @@
   border-left: 2px solid rgba(199, 105, 45, 0.25);
   color: var(--docs-ink);
   text-align: left;
+  flex: 1;
+}
+
+.docsSidebarFolderHeader {
+  display: flex;
+  align-items: center;
+}
+
+.docsSidebarFolderShareButton {
+  border: none;
+  background: transparent;
+  color: var(--docs-accent);
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+}
+
+.docsSidebarFolderShareButton:hover {
+  color: var(--docs-accent-strong);
+  background: rgba(199, 105, 45, 0.1);
+}
+
+.docsFolderNav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
+  border-bottom: 1px solid rgba(234, 215, 181, 0.4);
+  margin-bottom: 8px;
+}
+
+.docsFolderNavBack {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: transparent;
+  color: var(--docs-accent);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+.docsFolderNavBack:hover {
+  background: rgba(199, 105, 45, 0.1);
+}
+
+.docsFolderNavTitle {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--docs-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.docsFolderNavShare {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: rgba(199, 105, 45, 0.08);
+  color: var(--docs-accent);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border-radius: 8px;
+}
+
+.docsFolderNavShare:hover {
+  background: rgba(199, 105, 45, 0.18);
+  color: var(--docs-accent-strong);
+}
+
+.docsSidebarNewFolderButton {
+  border: none;
+  background: transparent;
+  color: var(--docs-accent);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.docsSidebarNewFolderButton:hover {
+  background: rgba(199, 105, 45, 0.1);
+}
+
+.docsSidebarNewFolderInput {
+  padding: 4px 8px 8px;
+}
+
+.docsSidebarFolderRow--dropTarget {
+  background: rgba(199, 105, 45, 0.15) !important;
+  border-radius: 6px;
+}
+
+.docsSidebarItem[draggable="true"] {
+  cursor: grab;
+}
+
+.docsSidebarItem[draggable="true"]:active {
+  cursor: grabbing;
+  opacity: 0.6;
 }
 
 .docsSidebarFolderRow:hover,

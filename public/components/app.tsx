@@ -43,6 +43,7 @@ import {
   DocumentRecord,
   DocumentSummary,
   EMPTY_RESOURCE_SHARING_CONFIG,
+  FOLDER_RESOURCE_TYPE,
   FolderSummary,
   getAccessLevelsForType,
   PLUGIN_NAME,
@@ -350,6 +351,13 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
   const [isMoveModalVisible, setIsMoveModalVisible] = useState(false);
   const [isShareModalVisible, setIsShareModalVisible] = useState(false);
+  const [shareFolderId, setShareFolderId] = useState<string | null>(null);
+  const [shareFolderName, setShareFolderName] = useState<string | null>(null);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState('');
+  const [dragDocumentId, setDragDocumentId] = useState<string | null>(null);
+  const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null);
   const [moveFolderValue, setMoveFolderValue] = useState('');
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
   const [showSwitchOverlay, setShowSwitchOverlay] = useState(false);
@@ -400,6 +408,48 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       [path]: !(current[path] ?? true),
     }));
   }
+
+  const currentFolder = currentFolderId ? folders.find((f) => f.id === currentFolderId) : null;
+
+  async function handleCreateFolder() {
+    const name = newFolderName.trim();
+    if (!name) return;
+    try {
+      const response = await createFolder(http, { name, parentId: currentFolderId });
+      setFolders((current) => [...current, response.folder]);
+      setNewFolderName('');
+      setIsCreatingFolder(false);
+    } catch (error) {
+      notifications.toasts.addDanger(`Failed to create folder: ${error}`);
+    }
+  }
+
+  async function handleDropDocumentOnFolder(documentId: string, folderId: string) {
+    const doc = documents.find((d) => d.id === documentId);
+    const folder = folders.find((f) => f.id === folderId);
+    if (!doc || !folder) return;
+    try {
+      const response = await updateDocument(http, documentId, {
+        title: doc.title,
+        content: '', // content is not in summary, will be preserved by backend
+        folderId,
+        seqNo: doc.seqNo,
+        primaryTerm: doc.primaryTerm,
+      });
+      setDocuments((current) => upsertSummary(current, response.document));
+      notifications.toasts.addSuccess(`Moved "${doc.title}" to "${folder.path}".`);
+    } catch (error) {
+      notifications.toasts.addDanger(`Failed to move document: ${error}`);
+    }
+    setDragDocumentId(null);
+    setDropTargetFolderId(null);
+  }
+  const currentFolderDocs = currentFolderId
+    ? documents.filter((d) => d.folderId === currentFolderId)
+    : [];
+  const currentSubfolders = currentFolderId
+    ? folders.filter((f) => f.parentId === currentFolderId)
+    : [];
 
   function applyCollaborationState(payload: {
     content: string;
@@ -644,7 +694,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
           canEdit ? null : 'You have view access to this document, but not edit access.'
         );
         setCanDeleteDocument(canDelete);
-        setCanShareDocument(canShare && !documentResponse.document.folderId);
+        setCanShareDocument(canShare);
         setStatusMessage(canEdit ? 'All changes saved' : 'Read-only access');
       } catch (error) {
         if (!cancelled) {
@@ -1285,7 +1335,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       setIsMoveModalVisible(false);
       setMoveFolderValue(response.document.folderPath);
       setConflictDocument(null);
-      setCanShareDocument(!response.document.folderId);
+      setCanShareDocument(true);
       setStatusMessage(response.document.folderPath ? 'Moved to folder' : 'Moved back to Ungrouped');
       notifications.toasts.addSuccess(
         response.document.folderPath
@@ -1388,6 +1438,15 @@ export function DocsApp({ coreStart }: DocsAppProps) {
         className={`docsSidebarItem ${
           document.id === selectedId ? 'docsSidebarItem--active' : ''
         }`}
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.setData('text/plain', document.id);
+          setDragDocumentId(document.id);
+        }}
+        onDragEnd={() => {
+          setDragDocumentId(null);
+          setDropTargetFolderId(null);
+        }}
         onClick={() => selectDocument(document.id)}
         style={{ marginLeft: `${depth * 18}px` }}
       >
@@ -1405,23 +1464,47 @@ export function DocsApp({ coreStart }: DocsAppProps) {
 
     return (
       <div key={node.path} className="docsSidebarTreeBranch">
-        <button
-          type="button"
-          className="docsSidebarFolderRow"
-          style={{ marginLeft: `${node.depth * 18}px` }}
-          onClick={() => toggleFolderExpanded(node.path)}
-        >
-          <EuiIcon
-            type={expanded ? 'arrowDown' : 'arrowRight'}
-            size="s"
-            className="docsSidebarFolderChevron"
-          />
-          <EuiIcon type="folderClosed" size="s" className="docsSidebarFolderIcon" />
-          <span className="docsSidebarFolderLabel">{node.name}</span>
-          <span className="docsSidebarFolderCount">
-            {node.documents.length + node.children.length}
-          </span>
-        </button>
+        <div className="docsSidebarFolderHeader" style={{ marginLeft: `${node.depth * 18}px` }}>
+          <button
+            type="button"
+            className={`docsSidebarFolderRow ${dropTargetFolderId === node.id ? 'docsSidebarFolderRow--dropTarget' : ''}`}
+            onClick={() => setCurrentFolderId(node.id)}
+            onDragOver={(e) => {
+              e.preventDefault();
+              setDropTargetFolderId(node.id);
+            }}
+            onDragLeave={() => setDropTargetFolderId(null)}
+            onDrop={(e) => {
+              e.preventDefault();
+              const docId = e.dataTransfer.getData('text/plain');
+              if (docId) handleDropDocumentOnFolder(docId, node.id);
+            }}
+          >
+            <EuiIcon
+              type={expanded ? 'arrowDown' : 'arrowRight'}
+              size="s"
+              className="docsSidebarFolderChevron"
+            />
+            <EuiIcon type="folderClosed" size="s" className="docsSidebarFolderIcon" />
+            <span className="docsSidebarFolderLabel">{node.name}</span>
+            <span className="docsSidebarFolderCount">
+              {node.documents.length + node.children.length}
+            </span>
+          </button>
+          {supportsResourceSharingForType(sharingConfig, FOLDER_RESOURCE_TYPE) ? (
+            <button
+              type="button"
+              className="docsSidebarFolderShareButton"
+              title={`Share "${node.name}"`}
+              onClick={() => {
+                setShareFolderId(node.id);
+                setShareFolderName(node.name);
+              }}
+            >
+              <EuiIcon type="share" size="s" />
+            </button>
+          ) : null}
+        </div>
         {expanded ? (
           <div className="docsSidebarTreeChildren">
             {node.documents.map((document) => renderSidebarDocument(document, node.depth + 1))}
@@ -1478,22 +1561,101 @@ export function DocsApp({ coreStart }: DocsAppProps) {
               </div>
             ) : null}
             <div className="docsSidebarList">
-              {folderTree.ungroupedDocuments.length > 0 ? (
+              {currentFolderId && currentFolder ? (
                 <div className="docsSidebarSection">
-                  <div className="docsSidebarSectionLabel">Ungrouped</div>
-                  <div className="docsSidebarSectionItems">
-                    {folderTree.ungroupedDocuments.map((document) =>
-                      renderSidebarDocument(document, 0)
-                    )}
+                  <div className="docsFolderNav">
+                    <button
+                      type="button"
+                      className="docsFolderNavBack"
+                      onClick={() => setCurrentFolderId(currentFolder.parentId || null)}
+                    >
+                      <EuiIcon type="arrowLeft" size="s" />
+                      <span>Back</span>
+                    </button>
+                    <span className="docsFolderNavTitle">{currentFolder.path}</span>
+                    {supportsResourceSharingForType(sharingConfig, FOLDER_RESOURCE_TYPE) ? (
+                      <button
+                        type="button"
+                        className="docsFolderNavShare"
+                        onClick={() => {
+                          setShareFolderId(currentFolder.id);
+                          setShareFolderName(currentFolder.path);
+                        }}
+                      >
+                        <EuiIcon type="share" size="s" />
+                        <span>Share</span>
+                      </button>
+                    ) : null}
                   </div>
+                  {currentSubfolders.length > 0 ? (
+                    <div className="docsSidebarSectionItems">
+                      {currentSubfolders.map((subfolder) => (
+                        <button
+                          key={subfolder.id}
+                          type="button"
+                          className="docsSidebarFolderRow"
+                          onClick={() => setCurrentFolderId(subfolder.id)}
+                        >
+                          <EuiIcon type="folderClosed" size="s" className="docsSidebarFolderIcon" />
+                          <span className="docsSidebarFolderLabel">{subfolder.name}</span>
+                          <EuiIcon type="arrowRight" size="s" className="docsSidebarFolderChevron" />
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="docsSidebarSectionItems">
+                    {currentFolderDocs.map((document) => renderSidebarDocument(document, 0))}
+                  </div>
+                  {currentFolderDocs.length === 0 && currentSubfolders.length === 0 ? (
+                    <div className="docsSidebarEmpty">
+                      <EuiText size="s" color="subdued">This folder is empty.</EuiText>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-              {folderTree.rootFolders.length > 0 ? (
-                <div className="docsSidebarSection">
-                  <div className="docsSidebarSectionLabel">Folders</div>
-                  <div className="docsSidebarTree">{folderTree.rootFolders.map(renderFolderNode)}</div>
-                </div>
-              ) : null}
+              ) : (
+                <>
+                  {folderTree.ungroupedDocuments.length > 0 ? (
+                    <div className="docsSidebarSection">
+                      <div className="docsSidebarSectionLabel">Ungrouped</div>
+                      <div className="docsSidebarSectionItems">
+                        {folderTree.ungroupedDocuments.map((document) =>
+                          renderSidebarDocument(document, 0)
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="docsSidebarSection">
+                    <div className="docsSidebarSectionLabel">
+                      Folders
+                      <button
+                        type="button"
+                        className="docsSidebarNewFolderButton"
+                        onClick={() => setIsCreatingFolder(true)}
+                      >
+                        + New
+                      </button>
+                    </div>
+                    {isCreatingFolder ? (
+                      <div className="docsSidebarNewFolderInput">
+                        <EuiFieldText
+                          compressed
+                          placeholder="Folder name"
+                          value={newFolderName}
+                          onChange={(e) => setNewFolderName(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleCreateFolder();
+                            if (e.key === 'Escape') { setIsCreatingFolder(false); setNewFolderName(''); }
+                          }}
+                          autoFocus
+                        />
+                      </div>
+                    ) : null}
+                    {folderTree.rootFolders.length > 0 ? (
+                      <div className="docsSidebarTree">{folderTree.rootFolders.map(renderFolderNode)}</div>
+                    ) : null}
+                  </div>
+                </>
+              )}
             </div>
           </EuiPanel>
         </aside>
@@ -1915,6 +2077,24 @@ export function DocsApp({ coreStart }: DocsAppProps) {
           onClose={() => setIsShareModalVisible(false)}
           onSave={() => {
             notifications.toasts.addSuccess(`Updated sharing for "${selectedDocument.title}".`);
+          }}
+        />
+      ) : null}
+
+      {shareFolderId && shareFolderName ? (
+        <ShareModal
+          http={http}
+          isOpen={true}
+          resourceId={shareFolderId}
+          resourceName={shareFolderName}
+          resourceType={FOLDER_RESOURCE_TYPE}
+          accessLevels={getAccessLevelsForType(sharingConfig, FOLDER_RESOURCE_TYPE)}
+          onClose={() => {
+            setShareFolderId(null);
+            setShareFolderName(null);
+          }}
+          onSave={() => {
+            notifications.toasts.addSuccess(`Updated sharing for folder "${shareFolderName}".`);
           }}
         />
       ) : null}

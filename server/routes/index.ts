@@ -651,7 +651,10 @@ export function defineRoutes(
             selectionEnd: request.body.selection_end,
           }),
         });
-      } catch (error) {
+      } catch (error: any) {
+        if (error?.message?.includes('No collaboration session found') || error?.message?.includes('No participant found')) {
+          return response.ok({ body: { stale: true } });
+        }
         logger.warn(`Failed to sync collaboration session for ${request.body.document_id}: ${error}`);
         return response.customError(getErrorPayload(error));
       }
