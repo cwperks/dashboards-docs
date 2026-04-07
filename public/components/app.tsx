@@ -1249,18 +1249,30 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       return;
     }
 
+    if (isSaving) {
+      notifications.toasts.addWarning(
+        'A save is still finishing. Try moving the document again in a moment.'
+      );
+      return;
+    }
+
     setIsMovingDocument(true);
     setInlineError(null);
 
     try {
       const nextFolderPath = normalizeFolderName(moveFolderValue);
       const nextFolder = await resolveOrCreateFolderPath(nextFolderPath);
+      const latestDocument = (await getDocument(http, selectedDocument.id)).document;
+
+      setSelectedDocument(latestDocument);
+      setDocuments((current) => upsertSummary(current, latestDocument));
+
       const response = await updateDocument(http, selectedDocument.id, {
         title: draftTitle.trim() || 'Untitled document',
         content: draftContentRef.current,
         folderId: nextFolder?.id ?? null,
-        seqNo: selectedDocument.seqNo,
-        primaryTerm: selectedDocument.primaryTerm,
+        seqNo: latestDocument.seqNo,
+        primaryTerm: latestDocument.primaryTerm,
       });
 
       setSelectedDocument(response.document);
