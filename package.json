@@ -1,0 +1,17 @@
+{
+  "name": "dashboards-docs",
+  "version": "3.7.0",
+  "description": "OpenSearch Dashboards collaborative docs plugin",
+  "license": "Apache-2.0",
+  "main": "index.ts",
+  "scripts": {
+    "osd": "node ../../scripts/osd",
+    "opensearch": "node ../../scripts/opensearch",
+    "lint:es": "node ../../scripts/eslint",
+    "lint": "yarn lint:es .",
+    "build:bundle": "node ../../scripts/build_opensearch_dashboards_platform_plugins --no-examples --no-core --filter dashboardsDocs",
+    "start": "yarn plugin-helpers start",
+    "build": "yarn plugin-helpers build",
+    "plugin-helpers": "node ../../scripts/plugin_helpers"
+  }
+}
