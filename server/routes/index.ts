@@ -27,6 +27,7 @@ const SECURITY_AUTHINFO_API = '/_plugins/_security/authinfo';
 const upsertSchema = schema.object({
   title: schema.string({ minLength: 1 }),
   content: schema.string(),
+  folder: schema.maybe(schema.nullable(schema.string())),
   seqNo: schema.maybe(schema.number()),
   primaryTerm: schema.maybe(schema.number()),
 });

@@ -52,6 +52,27 @@
   overflow: auto;
 }
 
+.docsSidebarSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.docsSidebarSectionItems {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.docsSidebarSectionLabel {
+  padding: 0 6px;
+  color: var(--docs-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .docsSidebarItem {
   display: flex;
   flex-direction: column;
@@ -95,6 +116,28 @@
   align-items: center;
   justify-content: center;
   min-height: 120px;
+}
+
+.docsFolderSuggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.docsFolderSuggestion {
+  border: 1px solid var(--docs-border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: rgba(255, 250, 241, 0.9);
+  color: var(--docs-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.docsFolderSuggestion:hover,
+.docsFolderSuggestion:focus {
+  border-color: var(--docs-accent);
+  color: var(--docs-accent-strong);
 }
 
 .docsTitleInput .euiFieldText {

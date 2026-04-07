@@ -16,6 +16,7 @@ export const RESOURCE_SHARE_ACTION = 'cluster:admin/security/resource/share';
 export interface DocumentSummary {
   id: string;
   title: string;
+  folder: string;
   excerpt: string;
   lastUpdatedBy: string;
   updatedAt: number;
@@ -40,6 +41,7 @@ export interface GetDocumentResponse {
 export interface UpsertDocumentPayload {
   title: string;
   content: string;
+  folder?: string | null;
   seqNo?: number;
   primaryTerm?: number;
 }

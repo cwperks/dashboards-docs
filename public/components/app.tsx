@@ -17,6 +17,12 @@ import {
   EuiFlexItem,
   EuiLoadingSpinner,
   EuiMarkdownFormat,
+  EuiModal,
+  EuiModalBody,
+  EuiModalFooter,
+  EuiModalHeader,
+  EuiModalHeaderTitle,
+  EuiOverlayMask,
   EuiPanel,
   EuiSpacer,
   EuiText,
@@ -61,11 +67,54 @@ interface DocsAppProps {
   coreStart: CoreStart;
 }
 
+interface FolderSection {
+  key: string;
+  label: string;
+  documents: DocumentSummary[];
+}
+
+function normalizeFolderName(value: string | null | undefined): string {
+  return value?.trim() ?? '';
+}
+
+function buildFolderSections(documents: DocumentSummary[]): FolderSection[] {
+  const byFolder = new Map<string, DocumentSummary[]>();
+
+  documents.forEach((document) => {
+    const folder = normalizeFolderName(document.folder);
+    const current = byFolder.get(folder) ?? [];
+    current.push(document);
+    byFolder.set(folder, current);
+  });
+
+  const sections: FolderSection[] = [];
+  const ungroupedDocuments = byFolder.get('') ?? [];
+  sections.push({
+    key: 'ungrouped',
+    label: 'Ungrouped',
+    documents: ungroupedDocuments,
+  });
+
+  Array.from(byFolder.keys())
+      .filter((folder) => folder !== '')
+      .sort((left, right) => left.localeCompare(right))
+      .forEach((folder) => {
+        sections.push({
+          key: folder,
+          label: folder,
+          documents: byFolder.get(folder) ?? [],
+        });
+      });
+
+  return sections.filter((section) => section.documents.length > 0);
+}
+
 function upsertSummary(documents: DocumentSummary[], document: DocumentRecord): DocumentSummary[] {
   const normalizedExcerpt = document.content.trim().replace(/\s+/g, ' ');
   const nextSummary: DocumentSummary = {
     id: document.id,
     title: document.title,
+    folder: document.folder,
     excerpt: normalizedExcerpt.slice(0, 180) + (normalizedExcerpt.length > 180 ? '...' : ''),
     lastUpdatedBy: document.lastUpdatedBy,
     updatedAt: document.updatedAt,
@@ -109,13 +158,22 @@ function clamp(value: number, min: number, max: number): number {
 function hasUnsavedChanges(
   persistedDocument: DocumentRecord | null,
   draftTitle: string,
-  draftContent: string
+  draftContent: string,
+  draftFolder: string
 ): boolean {
   if (!persistedDocument) {
-    return draftTitle.trim().length > 0 || draftContent.length > 0;
+    return (
+      draftTitle.trim().length > 0 ||
+      draftContent.length > 0 ||
+      normalizeFolderName(draftFolder).length > 0
+    );
   }
 
-  return draftTitle !== persistedDocument.title || draftContent !== persistedDocument.content;
+  return (
+    draftTitle !== persistedDocument.title ||
+    draftContent !== persistedDocument.content ||
+    normalizeFolderName(draftFolder) !== normalizeFolderName(persistedDocument.folder)
+  );
 }
 
 function computeReplaceOperation(
@@ -224,16 +282,20 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   const [selectedDocument, setSelectedDocument] = useState<DocumentRecord | null>(null);
   const [draftTitle, setDraftTitle] = useState('');
   const [draftContent, setDraftContent] = useState('');
+  const [draftFolder, setDraftFolder] = useState('');
   const [search, setSearch] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('split');
   const [isLoadingList, setIsLoadingList] = useState(true);
   const [isLoadingDocument, setIsLoadingDocument] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isMovingDocument, setIsMovingDocument] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
+  const [isMoveModalVisible, setIsMoveModalVisible] = useState(false);
   const [isShareModalVisible, setIsShareModalVisible] = useState(false);
+  const [moveFolderValue, setMoveFolderValue] = useState('');
   const [showSwitchOverlay, setShowSwitchOverlay] = useState(false);
   const [statusMessage, setStatusMessage] = useState('Ready to write');
   const [conflictDocument, setConflictDocument] = useState<DocumentRecord | null>(null);
@@ -267,6 +329,10 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   const canPersistCurrentDocument =
     selectedDocument === null || collaborationSessionId === null || isCollaborationCoordinator;
   const titleIsReadOnly = isSwitchingDocuments || isReadOnly || canPersistCurrentDocument === false;
+  const folderSections = buildFolderSections(documents);
+  const existingFolderNames = folderSections
+    .map((section) => section.label)
+    .filter((label) => label !== 'Ungrouped');
 
   function applyCollaborationState(payload: {
     content: string;
@@ -388,8 +454,8 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   }, [http]);
 
   useEffect(() => {
-    setIsDirty(hasUnsavedChanges(selectedDocument, draftTitle, draftContent));
-  }, [draftContent, draftTitle, selectedDocument]);
+    setIsDirty(hasUnsavedChanges(selectedDocument, draftTitle, draftContent, draftFolder));
+  }, [draftContent, draftFolder, draftTitle, selectedDocument]);
 
   useEffect(() => {
     let cancelled = false;
@@ -477,6 +543,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
         setSelectedDocument(documentResponse.document);
         setDraftTitle(documentResponse.document.title);
         setDraftContent(documentResponse.document.content);
+        setDraftFolder(documentResponse.document.folder);
         draftContentRef.current = documentResponse.document.content;
         serverShadowContentRef.current = documentResponse.document.content;
         serverVersionRef.current = 0;
@@ -699,8 +766,18 @@ export function DocsApp({ coreStart }: DocsAppProps) {
           if (latestDocument.title !== draftTitle && canPersistCurrentDocument === false) {
             setDraftTitle(latestDocument.title);
           }
+          if (latestDocument.folder !== draftFolder && canPersistCurrentDocument === false) {
+            setDraftFolder(latestDocument.folder);
+          }
 
-          if (hasUnsavedChanges(latestDocument, draftTitle, draftContentRef.current) === false) {
+          if (
+            hasUnsavedChanges(
+              latestDocument,
+              draftTitle,
+              draftContentRef.current,
+              draftFolder
+            ) === false
+          ) {
             setStatusMessage('All changes saved');
           }
         }
@@ -716,6 +793,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   }, [
     canPersistCurrentDocument,
     collaborationSessionId,
+    draftFolder,
     draftTitle,
     http,
     selectedDocument,
@@ -810,6 +888,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
 
         setSelectedDocument(response.document);
         setDraftTitle(response.document.title);
+        setDraftFolder(response.document.folder);
         applyRemoteContent(response.document.content);
         setStatusMessage('Document refreshed');
       } catch (error) {
@@ -838,7 +917,16 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     return () => {
       window.clearTimeout(timeout);
     };
-  }, [canPersistCurrentDocument, isDirty, isReadOnly, isSaving, selectedDocument, draftContent, draftTitle]);
+  }, [
+    canPersistCurrentDocument,
+    draftContent,
+    draftFolder,
+    draftTitle,
+    isDirty,
+    isReadOnly,
+    isSaving,
+    selectedDocument,
+  ]);
 
   async function enterReadOnlyMode() {
     if (!selectedId) {
@@ -849,6 +937,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       const response = await getDocument(http, selectedId);
       setSelectedDocument(response.document);
       setDraftTitle(response.document.title);
+      setDraftFolder(response.document.folder);
       applyRemoteContent(response.document.content);
       serverShadowContentRef.current = response.document.content;
       setDocuments((current) => upsertSummary(current, response.document));
@@ -887,6 +976,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       const payload = {
         title: resolvedTitle,
         content: draftContentRef.current,
+        folder: normalizeFolderName(draftFolder) || null,
         ...(selectedDocument
           ? {
               seqNo: selectedDocument.seqNo,
@@ -902,6 +992,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       setSelectedId(response.document.id);
       setSelectedDocument(response.document);
       setDraftTitle(response.document.title);
+      setDraftFolder(response.document.folder);
       applyRemoteContent(response.document.content);
       serverShadowContentRef.current = response.document.content;
       setIsCreatingNew(false);
@@ -916,10 +1007,12 @@ export function DocsApp({ coreStart }: DocsAppProps) {
 
           if (
             latestDocument.content === serverShadowContentRef.current &&
-            latestDocument.title === draftTitle
+            latestDocument.title === draftTitle &&
+            normalizeFolderName(latestDocument.folder) === normalizeFolderName(draftFolder)
           ) {
             setSelectedDocument(latestDocument);
             setDocuments((current) => upsertSummary(current, latestDocument));
+            setDraftFolder(latestDocument.folder);
             setConflictDocument(null);
             setStatusMessage('Live session caught up to the latest saved version');
             return;
@@ -957,6 +1050,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     setSelectedDocument(null);
     setDraftTitle('');
     setDraftContent('');
+    setDraftFolder('');
     draftContentRef.current = '';
     serverShadowContentRef.current = '';
     serverVersionRef.current = 0;
@@ -997,11 +1091,72 @@ export function DocsApp({ coreStart }: DocsAppProps) {
 
     setSelectedDocument(conflictDocument);
     setDraftTitle(conflictDocument.title);
+    setDraftFolder(conflictDocument.folder);
     applyRemoteContent(conflictDocument.content);
     serverShadowContentRef.current = conflictDocument.content;
     setDocuments((current) => upsertSummary(current, conflictDocument));
     setConflictDocument(null);
     setStatusMessage('Loaded the latest version');
+  }
+
+  function openMoveModal() {
+    if (!selectedDocument) {
+      return;
+    }
+
+    setMoveFolderValue(draftFolder);
+    setIsMoveModalVisible(true);
+  }
+
+  async function confirmMoveDocument() {
+    if (!selectedDocument || isMovingDocument || isReadOnly) {
+      return;
+    }
+
+    setIsMovingDocument(true);
+    setInlineError(null);
+
+    try {
+      const nextFolder = normalizeFolderName(moveFolderValue);
+      const response = await updateDocument(http, selectedDocument.id, {
+        title: draftTitle.trim() || 'Untitled document',
+        content: draftContentRef.current,
+        folder: nextFolder || null,
+        seqNo: selectedDocument.seqNo,
+        primaryTerm: selectedDocument.primaryTerm,
+      });
+
+      setSelectedDocument(response.document);
+      setDraftTitle(response.document.title);
+      setDraftFolder(response.document.folder);
+      applyRemoteContent(response.document.content);
+      serverShadowContentRef.current = response.document.content;
+      setDocuments((current) => upsertSummary(current, response.document));
+      setIsMoveModalVisible(false);
+      setMoveFolderValue(response.document.folder);
+      setConflictDocument(null);
+      setStatusMessage(response.document.folder ? 'Moved to folder' : 'Moved back to Ungrouped');
+      notifications.toasts.addSuccess(
+        response.document.folder
+          ? `Moved "${response.document.title}" to "${response.document.folder}".`
+          : `Moved "${response.document.title}" to Ungrouped.`
+      );
+    } catch (error) {
+      const statusCode = getStatusCode(error);
+      if (statusCode === 403) {
+        await enterReadOnlyMode();
+      } else if (statusCode === 409 && selectedDocument) {
+        setStatusMessage('Move conflict detected');
+        setConflictDocument((await getDocument(http, selectedDocument.id)).document);
+      } else {
+        const message = getErrorMessage(error);
+        setInlineError(message);
+        setStatusMessage('Move failed');
+        notifications.toasts.addDanger(message);
+      }
+    } finally {
+      setIsMovingDocument(false);
+    }
   }
 
   async function confirmDeleteDocument() {
@@ -1044,6 +1199,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       setSelectedDocument(null);
       setDraftTitle('');
       setDraftContent('');
+      setDraftFolder('');
       draftContentRef.current = '';
       setStatusMessage('Document deleted');
     } catch (error) {
@@ -1119,22 +1275,29 @@ export function DocsApp({ coreStart }: DocsAppProps) {
               </div>
             ) : null}
             <div className="docsSidebarList">
-              {documents.map((document) => (
-                <button
-                  key={document.id}
-                  className={`docsSidebarItem ${
-                    document.id === selectedId ? 'docsSidebarItem--active' : ''
-                  }`}
-                  onClick={() => selectDocument(document.id)}
-                >
-                  <span className="docsSidebarItemTitle">{document.title}</span>
-                  <span className="docsSidebarItemMeta">
-                    {document.lastUpdatedBy || 'unknown'} · {formatTimestamp(document.updatedAt)}
-                  </span>
-                  <span className="docsSidebarItemExcerpt">
-                    {document.excerpt || 'No preview yet'}
-                  </span>
-                </button>
+              {folderSections.map((section) => (
+                <div key={section.key} className="docsSidebarSection">
+                  <div className="docsSidebarSectionLabel">{section.label}</div>
+                  <div className="docsSidebarSectionItems">
+                    {section.documents.map((document) => (
+                      <button
+                        key={document.id}
+                        className={`docsSidebarItem ${
+                          document.id === selectedId ? 'docsSidebarItem--active' : ''
+                        }`}
+                        onClick={() => selectDocument(document.id)}
+                      >
+                        <span className="docsSidebarItemTitle">{document.title}</span>
+                        <span className="docsSidebarItemMeta">
+                          {document.lastUpdatedBy || 'unknown'} · {formatTimestamp(document.updatedAt)}
+                        </span>
+                        <span className="docsSidebarItemExcerpt">
+                          {document.excerpt || 'No preview yet'}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           </EuiPanel>
@@ -1208,6 +1371,11 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                       {statusMessage}
                       {selectedDocument ? ` · ${formatTimestamp(selectedDocument.updatedAt)}` : ''}
                     </span>
+                    {selectedDocument ? (
+                      <EuiBadge color="hollow">
+                        {normalizeFolderName(draftFolder) || 'Ungrouped'}
+                      </EuiBadge>
+                    ) : null}
                   </div>
 
                   {collaborationSessionId ? (
@@ -1254,6 +1422,18 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                         onClick={() => setIsShareModalVisible(true)}
                       >
                         Share
+                      </EuiButtonEmpty>
+                    </EuiFlexItem>
+                  ) : null}
+                  {selectedDocument ? (
+                    <EuiFlexItem grow={false}>
+                      <EuiButtonEmpty
+                        size="s"
+                        iconType="folderClosed"
+                        isDisabled={isReadOnly || canPersistCurrentDocument === false}
+                        onClick={openMoveModal}
+                      >
+                        Move
                       </EuiButtonEmpty>
                     </EuiFlexItem>
                   ) : null}
@@ -1427,6 +1607,83 @@ export function DocsApp({ coreStart }: DocsAppProps) {
           </EuiPanel>
         </main>
       </div>
+
+      {isMoveModalVisible && selectedDocument ? (
+        <EuiOverlayMask>
+          <EuiModal
+            onClose={() => {
+              if (!isMovingDocument) {
+                setIsMoveModalVisible(false);
+              }
+            }}
+            initialFocus="[name=folderName]"
+          >
+            <EuiModalHeader>
+              <EuiModalHeaderTitle>Move document</EuiModalHeaderTitle>
+            </EuiModalHeader>
+            <EuiModalBody>
+              <EuiText size="s">
+                Move <strong>{selectedDocument.title}</strong> into a folder. Leave the field
+                blank to keep it ungrouped.
+              </EuiText>
+              <EuiSpacer size="m" />
+              <EuiFieldText
+                fullWidth
+                name="folderName"
+                value={moveFolderValue}
+                placeholder="Folder name"
+                onChange={(event) => setMoveFolderValue(event.target.value)}
+                disabled={isMovingDocument}
+              />
+              {existingFolderNames.length > 0 ? (
+                <>
+                  <EuiSpacer size="m" />
+                  <div className="docsFolderSuggestions">
+                    {existingFolderNames.map((folderName) => (
+                      <button
+                        key={folderName}
+                        className="docsFolderSuggestion"
+                        onClick={() => setMoveFolderValue(folderName)}
+                        type="button"
+                      >
+                        {folderName}
+                      </button>
+                    ))}
+                    <button
+                      className="docsFolderSuggestion"
+                      onClick={() => setMoveFolderValue('')}
+                      type="button"
+                    >
+                      Ungrouped
+                    </button>
+                  </div>
+                </>
+              ) : null}
+            </EuiModalBody>
+            <EuiModalFooter>
+              <EuiButtonEmpty
+                onClick={() => {
+                  if (!isMovingDocument) {
+                    setIsMoveModalVisible(false);
+                  }
+                }}
+                disabled={isMovingDocument}
+              >
+                Cancel
+              </EuiButtonEmpty>
+              <EuiButton
+                fill
+                onClick={() => {
+                  void confirmMoveDocument();
+                }}
+                isLoading={isMovingDocument}
+              >
+                Move document
+              </EuiButton>
+            </EuiModalFooter>
+          </EuiModal>
+        </EuiOverlayMask>
+      ) : null}
 
       {isDeleteModalVisible && selectedDocument ? (
         <EuiConfirmModal
