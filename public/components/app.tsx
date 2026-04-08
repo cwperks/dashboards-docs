@@ -1568,8 +1568,9 @@ export function DocsApp({ coreStart }: DocsAppProps) {
         targetType === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
         targetType === monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS
       ) {
-        if (!canCommentRef.current) return;
-        const lineNumber = e.target.position.lineNumber;
+        const target = e.target as any;
+        const lineNumber = target.position?.lineNumber as number | undefined;
+        if (!lineNumber) return;
         const model = editor.getModel();
         if (!model) return;
         const lineStart = model.getOffsetAt({ lineNumber, column: 1 });
@@ -2265,13 +2266,15 @@ export function DocsApp({ coreStart }: DocsAppProps) {
               }
             }}
             onReply={async (threadId, text) => {
+              // Inherit the root comment's anchor
+              const rootComment = comments.find((c) => c.threadId === threadId && c.id === threadId);
               try {
                 const response = await createComment(http, {
                   documentId: selectedDocument.id,
                   threadId,
                   commentText: text,
-                  startOffset: 0,
-                  endOffset: 0,
+                  startOffset: rootComment?.startOffset ?? 0,
+                  endOffset: rootComment?.endOffset ?? 0,
                 });
                 setComments((current) => [...current, response.comment]);
               } catch (error: any) {
