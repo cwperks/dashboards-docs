@@ -335,9 +335,26 @@ function replaceEditorContent(
 
 export function DocsApp({ coreStart }: DocsAppProps) {
   const { chrome, http, notifications } = coreStart;
+
+  function getHashRoute(): { type: 'doc' | 'folder' | 'root'; id?: string } {
+    const hash = window.location.hash.replace(/^#\/?/, '');
+    if (hash.startsWith('doc/')) return { type: 'doc', id: hash.slice(4) };
+    if (hash.startsWith('folder/')) return { type: 'folder', id: hash.slice(7) };
+    return { type: 'root' };
+  }
+
+  function setHashRoute(type: 'doc' | 'folder' | 'root', id?: string) {
+    if (type === 'root') {
+      window.history.replaceState(null, '', window.location.pathname);
+    } else {
+      window.history.replaceState(null, '', `${window.location.pathname}#/${type}/${id}`);
+    }
+  }
+
+  const initialRoute = getHashRoute();
   const [folders, setFolders] = useState<FolderSummary[]>([]);
   const [documents, setDocuments] = useState<DocumentSummary[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialRoute.type === 'doc' ? initialRoute.id ?? null : null);
   const [selectedDocument, setSelectedDocument] = useState<DocumentRecord | null>(null);
   const [draftTitle, setDraftTitle] = useState('');
   const [draftContent, setDraftContent] = useState('');
@@ -357,7 +374,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   const [isShareModalVisible, setIsShareModalVisible] = useState(false);
   const [shareFolderId, setShareFolderId] = useState<string | null>(null);
   const [shareFolderName, setShareFolderName] = useState<string | null>(null);
-  const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
+  const [currentFolderId, setCurrentFolderId] = useState<string | null>(initialRoute.type === 'folder' ? initialRoute.id ?? null : null);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
   const [newFolderParentId, setNewFolderParentId] = useState<string | null>(null);
@@ -1330,6 +1347,15 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     setStatusMessage('New draft ready');
   }
 
+  function navigateToFolder(folderId: string | null) {
+    setCurrentFolderId(folderId);
+    if (folderId) {
+      setHashRoute('folder', folderId);
+    } else {
+      setHashRoute('root');
+    }
+  }
+
   function selectDocument(documentId: string) {
     if (documentId === selectedId) {
       return;
@@ -1337,6 +1363,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
 
     setIsCreatingNew(false);
     setSelectedId(documentId);
+    setHashRoute('doc', documentId);
     setReadOnlyReason(null);
     setCanDeleteDocument(true);
     setCanShareDocument(true);
@@ -1531,11 +1558,11 @@ export function DocsApp({ coreStart }: DocsAppProps) {
 
   function handleEditorDidMount(editor: monaco.editor.IStandaloneCodeEditor) {
     editorRef.current = editor;
-    let gutterClickActive = false;
+    const gutterClickRef = { current: false };
 
     editor.onDidChangeCursorSelection(() => {
-      if (gutterClickActive) {
-        gutterClickActive = false;
+      if (gutterClickRef.current) {
+        gutterClickRef.current = false;
         return;
       }
       const selection = getEditorOffsets(editor);
@@ -1575,10 +1602,9 @@ export function DocsApp({ coreStart }: DocsAppProps) {
         if (!model) return;
         const lineStart = model.getOffsetAt({ lineNumber, column: 1 });
         const lineEnd = model.getOffsetAt({ lineNumber, column: model.getLineMaxColumn(lineNumber) });
-        gutterClickActive = true;
+        gutterClickRef.current = true;
         setEditorSelection({ start: lineStart, end: lineEnd, lineLabel: `Line ${lineNumber}`, anchorType: 'line' });
         setShowComments(true);
-        editor.setSelection(new monaco.Range(lineNumber, 1, lineNumber, model.getLineMaxColumn(lineNumber)));
       }
     });
 
@@ -1654,7 +1680,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
               e.stopPropagation();
               setContextMenu({ x: e.clientX, y: e.clientY, parentId: node.id });
             }}
-            onDoubleClick={() => setCurrentFolderId(node.id)}
+            onDoubleClick={() => navigateToFolder(node.id)}
             onClick={() => toggleFolderExpanded(node.path)}
             onDragOver={(e) => {
               e.preventDefault();
@@ -1767,7 +1793,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                     <button
                       type="button"
                       className="docsFolderNavBack"
-                      onClick={() => setCurrentFolderId(currentFolder.parentId || null)}
+                      onClick={() => navigateToFolder(currentFolder.parentId || null)}
                     >
                       <EuiIcon type="arrowLeft" size="s" />
                       <span>Back</span>
@@ -1794,7 +1820,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                           <button
                             type="button"
                             className="docsSidebarFolderRow"
-                            onClick={() => setCurrentFolderId(subfolder.id)}
+                            onClick={() => navigateToFolder(subfolder.id)}
                             onContextMenu={(e) => {
                               e.preventDefault();
                               setContextMenu({ x: e.clientX, y: e.clientY, parentId: subfolder.id });
