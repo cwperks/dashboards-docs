@@ -380,7 +380,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   const [canComment, setCanComment] = useState(true);
   const [comments, setComments] = useState<Comment[]>([]);
   const [showComments, setShowComments] = useState(false);
-  const [editorSelection, setEditorSelection] = useState<{ start: number; end: number } | null>(null);
+  const [editorSelection, setEditorSelection] = useState<{ start: number; end: number; lineLabel?: string } | null>(null);
   const [currentUserName, setCurrentUserName] = useState('unknown');
   const [sharingConfig, setSharingConfig] = useState(EMPTY_RESOURCE_SHARING_CONFIG);
   const [collaborationSessionId, setCollaborationSessionId] = useState<string | null>(null);
@@ -391,6 +391,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
 
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const remoteDecorationIdsRef = useRef<string[]>([]);
+  const commentDecorationIdsRef = useRef<string[]>([]);
   const suppressEditorChangeRef = useRef(false);
   const draftContentRef = useRef(draftContent);
   const serverShadowContentRef = useRef('');
@@ -1067,6 +1068,54 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     );
   }, [collaborationParticipants, draftContent, viewMode]);
 
+  // Render comment highlight decorations
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || !showComments) {
+      if (editor) {
+        commentDecorationIdsRef.current = editor.deltaDecorations(commentDecorationIdsRef.current, []);
+      }
+      return;
+    }
+    const model = editor.getModel();
+    if (!model) return;
+
+    const inlineDecorations: monaco.editor.IModelDeltaDecoration[] = comments
+      .filter((c) => c.startOffset !== c.endOffset && c.startOffset >= 0 && c.endOffset <= model.getValueLength())
+      .map((comment) => {
+        const startPos = model.getPositionAt(comment.startOffset);
+        const endPos = model.getPositionAt(comment.endOffset);
+        return {
+          range: new monaco.Range(startPos.lineNumber, startPos.column, endPos.lineNumber, endPos.column),
+          options: {
+            className: 'docsCommentHighlight',
+            hoverMessage: { value: `**${comment.owner}**: ${comment.commentText}` },
+            stickiness: monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+          },
+        };
+      });
+
+    // Add glyph icons on lines that have comments
+    const commentedLines = new Set<number>();
+    comments.forEach((c) => {
+      if (c.startOffset !== c.endOffset && c.startOffset >= 0 && c.endOffset <= model.getValueLength()) {
+        commentedLines.add(model.getPositionAt(c.startOffset).lineNumber);
+      }
+    });
+    const glyphDecorations: monaco.editor.IModelDeltaDecoration[] = Array.from(commentedLines).map((line) => ({
+      range: new monaco.Range(line, 1, line, 1),
+      options: {
+        glyphMarginClassName: 'docsCommentGlyph',
+        glyphMarginHoverMessage: { value: 'Click to view comments' },
+      },
+    }));
+
+    commentDecorationIdsRef.current = editor.deltaDecorations(
+      commentDecorationIdsRef.current,
+      [...inlineDecorations, ...glyphDecorations]
+    );
+  }, [comments, showComments, draftContent]);
+
   useEffect(() => {
     if (!selectedId || isDirty === false || isReadOnly || collaborationSessionId !== null) {
       return;
@@ -1494,6 +1543,26 @@ export function DocsApp({ coreStart }: DocsAppProps) {
             selectionEnd: selection.end,
           })
         );
+      }
+    });
+
+    // Comment glyph on line number click
+    editor.onMouseDown((e) => {
+      if (
+        e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS ||
+        e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN
+      ) {
+        const lineNumber = e.target.position?.lineNumber;
+        if (lineNumber && canComment) {
+          const model = editor.getModel();
+          if (!model) return;
+          const lineStart = model.getOffsetAt({ lineNumber, column: 1 });
+          const lineEnd = model.getOffsetAt({ lineNumber, column: model.getLineMaxColumn(lineNumber) });
+          setEditorSelection({ start: lineStart, end: lineEnd, lineLabel: `${lineNumber}` });
+          setShowComments(true);
+          // Visually select the entire line in the editor
+          editor.setSelection(new monaco.Range(lineNumber, 1, lineNumber, model.getLineMaxColumn(lineNumber)));
+        }
       }
     });
   }
@@ -2089,7 +2158,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                         scrollBeyondLastLine: false,
                         automaticLayout: true,
                         lineNumbers: 'on',
-                        glyphMargin: false,
+                        glyphMargin: true,
                         folding: false,
                         wordWrap: 'on',
                         lineDecorationsWidth: 12,
@@ -2141,6 +2210,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
             currentUser={currentUserName}
             canComment={canComment}
             selectionRange={editorSelection}
+            onClearSelection={() => setEditorSelection(null)}
             onAddComment={async (text, startOffset, endOffset) => {
               try {
                 const response = await createComment(http, {
@@ -2175,6 +2245,22 @@ export function DocsApp({ coreStart }: DocsAppProps) {
               } catch (error: any) {
                 notifications.toasts.addDanger(`Failed to delete comment: ${error?.message || error}`);
               }
+            }}
+            onScrollTo={(comment) => {
+              const editor = editorRef.current;
+              if (!editor || comment.startOffset === comment.endOffset) return;
+              const model = editor.getModel();
+              if (!model) return;
+              const pos = model.getPositionAt(comment.startOffset);
+              editor.revealLineInCenter(pos.lineNumber);
+              editor.setSelection(
+                new monaco.Range(
+                  model.getPositionAt(comment.startOffset).lineNumber,
+                  model.getPositionAt(comment.startOffset).column,
+                  model.getPositionAt(comment.endOffset).lineNumber,
+                  model.getPositionAt(comment.endOffset).column
+                )
+              );
             }}
           />
         ) : null}

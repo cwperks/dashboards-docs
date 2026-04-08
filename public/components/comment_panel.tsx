@@ -7,7 +7,6 @@ import React, { useState } from 'react';
 import {
   EuiButton,
   EuiButtonEmpty,
-  EuiFieldText,
   EuiFlexGroup,
   EuiFlexItem,
   EuiIcon,
@@ -28,9 +27,10 @@ interface CommentThreadProps {
   canComment: boolean;
   onReply: (threadId: string, text: string) => void;
   onDelete: (comment: Comment) => void;
+  onScrollTo: (comment: Comment) => void;
 }
 
-function CommentThread({ comments, currentUser, canComment, onReply, onDelete }: CommentThreadProps) {
+function CommentThread({ comments, currentUser, canComment, onReply, onDelete, onScrollTo }: CommentThreadProps) {
   const [replyText, setReplyText] = useState('');
   const [showReply, setShowReply] = useState(false);
   const root = comments[0];
@@ -50,7 +50,12 @@ function CommentThread({ comments, currentUser, canComment, onReply, onDelete }:
               </button>
             ) : null}
           </div>
-          <div className="docsCommentBody">{comment.commentText}</div>
+          <div
+            className={`docsCommentBody ${comment.startOffset !== comment.endOffset ? 'docsCommentBody--linked' : ''}`}
+            onClick={() => { if (comment.startOffset !== comment.endOffset) onScrollTo(comment); }}
+          >
+            {comment.commentText}
+          </div>
         </div>
       ))}
       {canComment ? (
@@ -103,7 +108,9 @@ interface CommentPanelProps {
   onAddComment: (text: string, startOffset: number, endOffset: number) => void;
   onReply: (threadId: string, text: string) => void;
   onDelete: (comment: Comment) => void;
-  selectionRange: { start: number; end: number } | null;
+  onScrollTo: (comment: Comment) => void;
+  onClearSelection?: () => void;
+  selectionRange: { start: number; end: number; lineLabel?: string } | null;
 }
 
 export function CommentPanel({
@@ -113,9 +120,17 @@ export function CommentPanel({
   onAddComment,
   onReply,
   onDelete,
+  onScrollTo,
+  onClearSelection,
   selectionRange,
 }: CommentPanelProps) {
   const [newCommentText, setNewCommentText] = useState('');
+  const [showAll, setShowAll] = useState(false);
+
+  // Reset filter when selection changes
+  React.useEffect(() => {
+    setShowAll(false);
+  }, [selectionRange?.start, selectionRange?.end]);
 
   // Group comments by threadId
   const threads = new Map<string, Comment[]>();
@@ -125,52 +140,78 @@ export function CommentPanel({
     threads.set(comment.threadId, existing);
   });
 
-  // Sort threads by first comment's creation time
-  const sortedThreads = Array.from(threads.values()).sort(
+  // Filter to relevant threads if a line/selection is active
+  const hasSelection = selectionRange && selectionRange.start !== selectionRange.end;
+  const allThreads = Array.from(threads.values()).sort(
     (a, b) => a[0].createdAt - b[0].createdAt
   );
+  const filteredThreads = hasSelection
+    ? allThreads.filter((thread) => {
+        const root = thread[0];
+        if (root.startOffset === 0 && root.endOffset === 0) return false;
+        // Show threads that overlap with the current selection
+        return root.startOffset < selectionRange!.end && root.endOffset > selectionRange!.start;
+      })
+    : allThreads;
+
+  const sortedThreads = showAll ? allThreads : filteredThreads;
 
   return (
     <div className="docsCommentPanel">
       <div className="docsCommentPanelHeader">
         <EuiText size="xs"><strong>Comments</strong></EuiText>
-        <EuiText size="xs" color="subdued">{sortedThreads.length} thread{sortedThreads.length !== 1 ? 's' : ''}</EuiText>
+        {hasSelection && !showAll ? (
+          <button className="docsCommentShowAll" onClick={() => setShowAll(true)}>
+            Show all ({allThreads.length})
+          </button>
+        ) : hasSelection && showAll ? (
+          <button className="docsCommentShowAll" onClick={() => setShowAll(false)}>
+            Show relevant ({filteredThreads.length})
+          </button>
+        ) : (
+          <EuiText size="xs" color="subdued">{allThreads.length} thread{allThreads.length !== 1 ? 's' : ''}</EuiText>
+        )}
       </div>
 
       {canComment ? (
         <div className="docsCommentNew">
+          {selectionRange && selectionRange.start !== selectionRange.end ? (
+            <div className="docsCommentAnchorPreview">
+              <EuiIcon type="editorComment" size="s" />
+              <EuiText size="xs" color="subdued">
+                Commenting on line {selectionRange.lineLabel ?? `offset ${selectionRange.start}–${selectionRange.end}`}
+              </EuiText>
+              <button
+                className="docsCommentAnchorClear"
+                onClick={() => onClearSelection?.()}
+              >
+                <EuiIcon type="cross" size="s" />
+              </button>
+            </div>
+          ) : null}
           <EuiTextArea
             compressed
             rows={2}
-            placeholder="Add a comment..."
+            placeholder={selectionRange && selectionRange.start !== selectionRange.end ? 'Comment on this line...' : 'Add a general comment...'}
             value={newCommentText}
             onChange={(e) => setNewCommentText(e.target.value)}
           />
           <EuiSpacer size="xs" />
-          <EuiFlexGroup gutterSize="s" alignItems="center">
-            <EuiFlexItem grow={false}>
-              <EuiButton
-                size="s"
-                fill
-                disabled={!newCommentText.trim()}
-                onClick={() => {
-                  onAddComment(
-                    newCommentText.trim(),
-                    selectionRange?.start ?? 0,
-                    selectionRange?.end ?? 0
-                  );
-                  setNewCommentText('');
-                }}
-              >
-                Comment
-              </EuiButton>
-            </EuiFlexItem>
-            {selectionRange && selectionRange.start !== selectionRange.end ? (
-              <EuiFlexItem grow={false}>
-                <EuiText size="xs" color="subdued">on selection</EuiText>
-              </EuiFlexItem>
-            ) : null}
-          </EuiFlexGroup>
+          <EuiButton
+            size="s"
+            fill
+            disabled={!newCommentText.trim()}
+            onClick={() => {
+              onAddComment(
+                newCommentText.trim(),
+                selectionRange?.start ?? 0,
+                selectionRange?.end ?? 0
+              );
+              setNewCommentText('');
+            }}
+          >
+            Comment
+          </EuiButton>
         </div>
       ) : null}
 
@@ -188,6 +229,7 @@ export function CommentPanel({
               canComment={canComment}
               onReply={onReply}
               onDelete={onDelete}
+              onScrollTo={onScrollTo}
             />
           ))
         )}
