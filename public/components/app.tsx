@@ -56,7 +56,7 @@ import {
   listDocuments,
   updateDocument,
 } from '../services/documents';
-import { createFolder, listFolders } from '../services/folders';
+import { createFolder, deleteFolder, listFolders } from '../services/folders';
 import {
   joinCollaborationSession,
   leaveCollaborationSession,
@@ -356,10 +356,14 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
   const [newFolderName, setNewFolderName] = useState('');
+  const [newFolderParentId, setNewFolderParentId] = useState<string | null>(null);
   const [dragDocumentId, setDragDocumentId] = useState<string | null>(null);
   const [dropTargetFolderId, setDropTargetFolderId] = useState<string | null>(null);
-  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; parentId: string | null } | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; parentId: string | null; documentId?: string | null } | null>(null);
   const [createDocInFolderId, setCreateDocInFolderId] = useState<string | null>(null);
+  const [isCreatingDocInline, setIsCreatingDocInline] = useState(false);
+  const [inlineDocFolderId, setInlineDocFolderId] = useState<string | null>(null);
+  const [inlineDocName, setInlineDocName] = useState('');
   const [moveFolderValue, setMoveFolderValue] = useState('');
   const [expandedFolders, setExpandedFolders] = useState<Record<string, boolean>>({});
   const [showSwitchOverlay, setShowSwitchOverlay] = useState(false);
@@ -413,11 +417,30 @@ export function DocsApp({ coreStart }: DocsAppProps) {
 
   const currentFolder = currentFolderId ? folders.find((f) => f.id === currentFolderId) : null;
 
+  async function handleCreateDocInline() {
+    const title = inlineDocName.trim() || 'Untitled document';
+    try {
+      const response = await createDocument(http, {
+        title,
+        content: '',
+        folderId: inlineDocFolderId || null,
+      });
+      setDocuments((current) => upsertSummary(current, response.document));
+      setInlineDocName('');
+      setIsCreatingDocInline(false);
+      setInlineDocFolderId(null);
+      selectDocument(response.document.id);
+    } catch (error: any) {
+      const message = error?.body?.message || error?.message || String(error);
+      notifications.toasts.addDanger(`Failed to create document: ${message}`);
+    }
+  }
+
   async function handleCreateFolder() {
     const name = newFolderName.trim();
     if (!name) return;
     try {
-      const parentId = contextMenu?.parentId ?? currentFolderId;
+      const parentId = newFolderParentId ?? currentFolderId;
       const response = await createFolder(http, { name, parentId });
       setFolders((current) => [...current, response.folder]);
       setNewFolderName('');
@@ -1201,15 +1224,14 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     }
   }
 
-  function startNewDocument(folderId?: string | null) {
-    const folder = folderId ? folders.find((f) => f.id === folderId) : null;
+  function startNewDocument() {
     setIsCreatingNew(true);
     setSelectedId(null);
     setSelectedDocument(null);
     setDraftTitle('');
     setDraftContent('');
-    setDraftFolder(folder?.path ?? '');
-    setDraftFolderId(folder?.id ?? '');
+    setDraftFolder('');
+    setDraftFolderId('');
     draftContentRef.current = '';
     serverShadowContentRef.current = '';
     serverVersionRef.current = 0;
@@ -1221,7 +1243,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     setCollaborationSessionId(null);
     setCollaborationParticipants([]);
     setCoordinatorSessionId(null);
-    setStatusMessage(folder ? `New draft in "${folder.path}"` : 'New draft ready');
+    setStatusMessage('New draft ready');
   }
 
   function selectDocument(documentId: string) {
@@ -1458,6 +1480,11 @@ export function DocsApp({ coreStart }: DocsAppProps) {
           setDropTargetFolderId(null);
         }}
         onClick={() => selectDocument(document.id)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setContextMenu({ x: e.clientX, y: e.clientY, parentId: null, documentId: document.id });
+        }}
         style={{ marginLeft: `${depth * 18}px` }}
       >
         <span className="docsSidebarItemTitle">{document.title}</span>
@@ -1478,11 +1505,13 @@ export function DocsApp({ coreStart }: DocsAppProps) {
           <button
             type="button"
             className={`docsSidebarFolderRow ${dropTargetFolderId === node.id ? 'docsSidebarFolderRow--dropTarget' : ''}`}
-            onClick={() => setCurrentFolderId(node.id)}
             onContextMenu={(e) => {
               e.preventDefault();
+              e.stopPropagation();
               setContextMenu({ x: e.clientX, y: e.clientY, parentId: node.id });
             }}
+            onDoubleClick={() => setCurrentFolderId(node.id)}
+            onClick={() => toggleFolderExpanded(node.path)}
             onDragOver={(e) => {
               e.preventDefault();
               setDropTargetFolderId(node.id);
@@ -1505,22 +1534,29 @@ export function DocsApp({ coreStart }: DocsAppProps) {
               {node.documents.length + node.children.length}
             </span>
           </button>
-          {supportsResourceSharingForType(sharingConfig, FOLDER_RESOURCE_TYPE) ? (
-            <button
-              type="button"
-              className="docsSidebarFolderShareButton"
-              title={`Share "${node.name}"`}
-              onClick={() => {
-                setShareFolderId(node.id);
-                setShareFolderName(node.name);
-              }}
-            >
-              <EuiIcon type="share" size="s" />
-            </button>
-          ) : null}
         </div>
         {expanded ? (
           <div className="docsSidebarTreeChildren">
+            {isCreatingDocInline && inlineDocFolderId === node.id ? (
+              <div className="docsSidebarInlineInput" style={{ marginLeft: `${(node.depth + 1) * 18}px` }}>
+                <EuiIcon type="document" size="s" className="docsSidebarInlineInputIcon" />
+                <input className="docsSidebarInlineInputField" placeholder="Document name" value={inlineDocName}
+                  onChange={(e) => setInlineDocName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleCreateDocInline(); if (e.key === 'Escape') { setIsCreatingDocInline(false); setInlineDocName(''); } }}
+                  autoFocus />
+                <button type="button" className="docsSidebarInlineInputCancel" onClick={() => { setIsCreatingDocInline(false); setInlineDocName(''); }}><EuiIcon type="cross" size="s" /></button>
+              </div>
+            ) : null}
+            {isCreatingFolder && newFolderParentId === node.id ? (
+              <div className="docsSidebarInlineInput" style={{ marginLeft: `${(node.depth + 1) * 18}px` }}>
+                <EuiIcon type="folderClosed" size="s" className="docsSidebarInlineInputIcon" />
+                <input className="docsSidebarInlineInputField" placeholder="Folder name" value={newFolderName}
+                  onChange={(e) => setNewFolderName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleCreateFolder(); if (e.key === 'Escape') { setIsCreatingFolder(false); setNewFolderName(''); } }}
+                  autoFocus />
+                <button type="button" className="docsSidebarInlineInputCancel" onClick={() => { setIsCreatingFolder(false); setNewFolderName(''); }}><EuiIcon type="cross" size="s" /></button>
+              </div>
+            ) : null}
             {node.documents.map((document) => renderSidebarDocument(document, node.depth + 1))}
             {node.children.map((childNode) => renderFolderNode(childNode))}
           </div>
@@ -1610,23 +1646,68 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                   {currentSubfolders.length > 0 ? (
                     <div className="docsSidebarSectionItems">
                       {currentSubfolders.map((subfolder) => (
-                        <button
-                          key={subfolder.id}
-                          type="button"
-                          className="docsSidebarFolderRow"
-                          onClick={() => setCurrentFolderId(subfolder.id)}
-                        >
-                          <EuiIcon type="folderClosed" size="s" className="docsSidebarFolderIcon" />
-                          <span className="docsSidebarFolderLabel">{subfolder.name}</span>
-                          <EuiIcon type="arrowRight" size="s" className="docsSidebarFolderChevron" />
-                        </button>
+                        <div key={subfolder.id}>
+                          <button
+                            type="button"
+                            className="docsSidebarFolderRow"
+                            onClick={() => setCurrentFolderId(subfolder.id)}
+                            onContextMenu={(e) => {
+                              e.preventDefault();
+                              setContextMenu({ x: e.clientX, y: e.clientY, parentId: subfolder.id });
+                            }}
+                          >
+                            <EuiIcon type="folderClosed" size="s" className="docsSidebarFolderIcon" />
+                            <span className="docsSidebarFolderLabel">{subfolder.name}</span>
+                            <EuiIcon type="arrowRight" size="s" className="docsSidebarFolderChevron" />
+                          </button>
+                          {isCreatingDocInline && inlineDocFolderId === subfolder.id ? (
+                            <div className="docsSidebarInlineInput" style={{ paddingLeft: '18px' }}>
+                              <EuiIcon type="document" size="s" className="docsSidebarInlineInputIcon" />
+                              <input className="docsSidebarInlineInputField" placeholder="Document name" value={inlineDocName}
+                                onChange={(e) => setInlineDocName(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateDocInline(); if (e.key === 'Escape') { setIsCreatingDocInline(false); setInlineDocName(''); } }}
+                                autoFocus />
+                              <button type="button" className="docsSidebarInlineInputCancel" onClick={() => { setIsCreatingDocInline(false); setInlineDocName(''); }}><EuiIcon type="cross" size="s" /></button>
+                            </div>
+                          ) : null}
+                          {isCreatingFolder && newFolderParentId === subfolder.id ? (
+                            <div className="docsSidebarInlineInput" style={{ paddingLeft: '18px' }}>
+                              <EuiIcon type="folderClosed" size="s" className="docsSidebarInlineInputIcon" />
+                              <input className="docsSidebarInlineInputField" placeholder="Folder name" value={newFolderName}
+                                onChange={(e) => setNewFolderName(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateFolder(); if (e.key === 'Escape') { setIsCreatingFolder(false); setNewFolderName(''); } }}
+                                autoFocus />
+                              <button type="button" className="docsSidebarInlineInputCancel" onClick={() => { setIsCreatingFolder(false); setNewFolderName(''); }}><EuiIcon type="cross" size="s" /></button>
+                            </div>
+                          ) : null}
+                        </div>
                       ))}
                     </div>
                   ) : null}
                   <div className="docsSidebarSectionItems">
                     {currentFolderDocs.map((document) => renderSidebarDocument(document, 0))}
+                    {isCreatingDocInline && inlineDocFolderId === currentFolderId ? (
+                      <div className="docsSidebarInlineInput">
+                        <EuiIcon type="document" size="s" className="docsSidebarInlineInputIcon" />
+                        <input className="docsSidebarInlineInputField" placeholder="Document name" value={inlineDocName}
+                          onChange={(e) => setInlineDocName(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') handleCreateDocInline(); if (e.key === 'Escape') { setIsCreatingDocInline(false); setInlineDocName(''); } }}
+                          autoFocus />
+                        <button type="button" className="docsSidebarInlineInputCancel" onClick={() => { setIsCreatingDocInline(false); setInlineDocName(''); }}><EuiIcon type="cross" size="s" /></button>
+                      </div>
+                    ) : null}
                   </div>
-                  {currentFolderDocs.length === 0 && currentSubfolders.length === 0 ? (
+                  {isCreatingFolder && newFolderParentId === currentFolderId ? (
+                    <div className="docsSidebarInlineInput">
+                      <EuiIcon type="folderClosed" size="s" className="docsSidebarInlineInputIcon" />
+                      <input className="docsSidebarInlineInputField" placeholder="Folder name" value={newFolderName}
+                        onChange={(e) => setNewFolderName(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleCreateFolder(); if (e.key === 'Escape') { setIsCreatingFolder(false); setNewFolderName(''); } }}
+                        autoFocus />
+                      <button type="button" className="docsSidebarInlineInputCancel" onClick={() => { setIsCreatingFolder(false); setNewFolderName(''); }}><EuiIcon type="cross" size="s" /></button>
+                    </div>
+                  ) : null}
+                  {currentFolderDocs.length === 0 && currentSubfolders.length === 0 && !isCreatingDocInline && !isCreatingFolder ? (
                     <div className="docsSidebarEmpty">
                       <EuiText size="s" color="subdued">This folder is empty.</EuiText>
                     </div>
@@ -1634,13 +1715,32 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                 </div>
               ) : (
                 <>
-                  {folderTree.ungroupedDocuments.length > 0 ? (
+                  {folderTree.ungroupedDocuments.length > 0 || (isCreatingDocInline && !inlineDocFolderId) ? (
                     <div className="docsSidebarSection">
                       <div className="docsSidebarSectionLabel">Ungrouped</div>
                       <div className="docsSidebarSectionItems">
                         {folderTree.ungroupedDocuments.map((document) =>
                           renderSidebarDocument(document, 0)
                         )}
+                        {isCreatingDocInline && !inlineDocFolderId ? (
+                          <div className="docsSidebarInlineInput">
+                            <EuiIcon type="document" size="s" className="docsSidebarInlineInputIcon" />
+                            <input
+                              className="docsSidebarInlineInputField"
+                              placeholder="Document name"
+                              value={inlineDocName}
+                              onChange={(e) => setInlineDocName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter') handleCreateDocInline();
+                                if (e.key === 'Escape') { setIsCreatingDocInline(false); setInlineDocName(''); }
+                              }}
+                              autoFocus
+                            />
+                            <button type="button" className="docsSidebarInlineInputCancel" onClick={() => { setIsCreatingDocInline(false); setInlineDocName(''); }}>
+                              <EuiIcon type="cross" size="s" />
+                            </button>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
                   ) : null}
@@ -1655,10 +1755,11 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                         + New
                       </button>
                     </div>
-                    {isCreatingFolder ? (
-                      <div className="docsSidebarNewFolderInput">
-                        <EuiFieldText
-                          compressed
+                    {isCreatingFolder && !newFolderParentId ? (
+                      <div className="docsSidebarInlineInput">
+                        <EuiIcon type="folderClosed" size="s" className="docsSidebarInlineInputIcon" />
+                        <input
+                          className="docsSidebarInlineInputField"
                           placeholder="Folder name"
                           value={newFolderName}
                           onChange={(e) => setNewFolderName(e.target.value)}
@@ -1668,6 +1769,9 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                           }}
                           autoFocus
                         />
+                        <button type="button" className="docsSidebarInlineInputCancel" onClick={() => { setIsCreatingFolder(false); setNewFolderName(''); }}>
+                          <EuiIcon type="cross" size="s" />
+                        </button>
                       </div>
                     ) : null}
                     {folderTree.rootFolders.length > 0 ? (
@@ -2130,24 +2234,127 @@ export function DocsApp({ coreStart }: DocsAppProps) {
               type="button"
               className="docsContextMenuItem"
               onClick={() => {
-                startNewDocument(contextMenu.parentId);
+                setIsCreatingDocInline(true);
+                setInlineDocFolderId(contextMenu.parentId);
+                setInlineDocName('');
+                // Expand the folder so the input is visible, but don't navigate into it
+                if (contextMenu.parentId) {
+                  const folder = folders.find((f) => f.id === contextMenu.parentId);
+                  if (folder) {
+                    setExpandedFolders((current) => ({ ...current, [folder.path]: true }));
+                  }
+                }
                 setContextMenu(null);
               }}
             >
               <EuiIcon type="document" size="s" />
-              <span>New Document{contextMenu.parentId ? ' (in folder)' : ''}</span>
+              <span>New Document{contextMenu.parentId ? ' ' : ''}</span>
             </button>
             <button
               type="button"
               className="docsContextMenuItem"
               onClick={() => {
                 setIsCreatingFolder(true);
+                setNewFolderParentId(contextMenu.parentId);
+                setNewFolderName('');
+                // Expand the folder so the input is visible
+                if (contextMenu.parentId) {
+                  const folder = folders.find((f) => f.id === contextMenu.parentId);
+                  if (folder) {
+                    setExpandedFolders((current) => ({ ...current, [folder.path]: true }));
+                  }
+                }
                 setContextMenu(null);
               }}
             >
               <EuiIcon type="folderClosed" size="s" />
-              <span>New Folder{contextMenu.parentId ? ' (inside)' : ''}</span>
+              <span>New Folder{contextMenu.parentId ? ' ' : ''}</span>
             </button>
+            {contextMenu.parentId ? (
+              <>
+                <div className="docsContextMenuDivider" />
+                <button
+                  type="button"
+                  className="docsContextMenuItem"
+                  onClick={() => {
+                    const folder = folders.find((f) => f.id === contextMenu.parentId);
+                    if (folder) {
+                      setShareFolderId(folder.id);
+                      setShareFolderName(folder.name);
+                    }
+                    setContextMenu(null);
+                  }}
+                >
+                  <EuiIcon type="share" size="s" />
+                  <span>Share</span>
+                </button>
+                <button
+                  type="button"
+                  className="docsContextMenuItem docsContextMenuItem--danger"
+                  onClick={() => {
+                    const folder = folders.find((f) => f.id === contextMenu.parentId);
+                    if (folder) {
+                      deleteFolder(http, folder.id, folder.seqNo, folder.primaryTerm)
+                        .then(() => {
+                          setFolders((current) => current.filter((f) => f.id !== folder.id));
+                          notifications.toasts.addSuccess(`Deleted folder "${folder.name}".`);
+                        })
+                        .catch((error: any) => {
+                          const message = error?.body?.message || error?.message || String(error);
+                          notifications.toasts.addDanger(`Failed to delete folder: ${message}`);
+                        });
+                    }
+                    setContextMenu(null);
+                  }}
+                >
+                  <EuiIcon type="trash" size="s" />
+                  <span>Delete</span>
+                </button>
+              </>
+            ) : null}
+            {contextMenu.documentId ? (
+              <>
+                <div className="docsContextMenuDivider" />
+                <button
+                  type="button"
+                  className="docsContextMenuItem"
+                  onClick={() => {
+                    selectDocument(contextMenu.documentId!);
+                    setIsShareModalVisible(true);
+                    setContextMenu(null);
+                  }}
+                >
+                  <EuiIcon type="share" size="s" />
+                  <span>Share</span>
+                </button>
+                <button
+                  type="button"
+                  className="docsContextMenuItem docsContextMenuItem--danger"
+                  onClick={() => {
+                    const doc = documents.find((d) => d.id === contextMenu.documentId);
+                    if (doc) {
+                      deleteDocument(http, doc.id, doc.seqNo, doc.primaryTerm)
+                        .then(() => {
+                          setDocuments((current) => current.filter((d) => d.id !== doc.id));
+                          if (selectedId === doc.id) {
+                            setSelectedId(null);
+                            setSelectedDocument(null);
+                          }
+                          notifications.toasts.addSuccess(`Deleted "${doc.title}".`);
+                        })
+                        .catch((error: any) => {
+                          const message = error?.body?.message || error?.message || String(error);
+                          notifications.toasts.addDanger(`Failed to delete document: ${message}`);
+                        });
+                    }
+                    setContextMenu(null);
+                  }}
+                >
+                  <EuiIcon type="trash" size="s" />
+                  <span>Delete</span>
+                </button>
+              </>
+            ) : null}
           </div>
         </>
       ) : null}

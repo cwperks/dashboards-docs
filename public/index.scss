@@ -652,3 +652,60 @@
   background: rgba(199, 105, 45, 0.08);
   color: var(--docs-accent-strong);
 }
+
+.docsSidebarInlineInput {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+}
+
+.docsSidebarInlineInputIcon {
+  color: var(--docs-muted);
+  flex-shrink: 0;
+}
+
+.docsSidebarInlineInputField {
+  flex: 1;
+  border: 1px solid rgba(199, 105, 45, 0.4);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  background: transparent;
+  color: var(--docs-ink);
+  outline: none;
+}
+
+.docsSidebarInlineInputField:focus {
+  border-color: var(--docs-accent);
+  box-shadow: 0 0 0 1px var(--docs-accent);
+}
+
+.docsSidebarInlineInputCancel {
+  border: none;
+  background: transparent;
+  color: var(--docs-muted);
+  cursor: pointer;
+  padding: 2px;
+  display: flex;
+  align-items: center;
+}
+
+.docsSidebarInlineInputCancel:hover {
+  color: var(--docs-accent-strong);
+}
+
+.docsContextMenuDivider {
+  height: 1px;
+  background: rgba(234, 215, 181, 0.4);
+  margin: 4px 8px;
+}
+
+.docsContextMenuItem--danger {
+  color: #bd271e;
+}
+
+.docsContextMenuItem--danger:hover {
+  background: rgba(189, 39, 30, 0.08);
+  color: #bd271e;
+}
