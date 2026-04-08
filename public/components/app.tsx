@@ -378,9 +378,10 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   const [canDeleteDocument, setCanDeleteDocument] = useState(true);
   const [canShareDocument, setCanShareDocument] = useState(true);
   const [canComment, setCanComment] = useState(true);
+  const canCommentRef = useRef(true);
   const [comments, setComments] = useState<Comment[]>([]);
   const [showComments, setShowComments] = useState(false);
-  const [editorSelection, setEditorSelection] = useState<{ start: number; end: number; lineLabel?: string } | null>(null);
+  const [editorSelection, setEditorSelection] = useState<{ start: number; end: number; lineLabel?: string; anchorType: 'doc' | 'line' | 'range' } | null>(null);
   const [currentUserName, setCurrentUserName] = useState('unknown');
   const [sharingConfig, setSharingConfig] = useState(EMPTY_RESOURCE_SHARING_CONFIG);
   const [collaborationSessionId, setCollaborationSessionId] = useState<string | null>(null);
@@ -725,6 +726,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
 
         setSelectedDocument(documentResponse.document);
         setCanComment(userCanComment);
+        canCommentRef.current = userCanComment;
         setDraftTitle(documentResponse.document.title);
         setDraftContent(documentResponse.document.content);
         setDraftFolder(documentResponse.document.folderPath);
@@ -1071,7 +1073,10 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   // Render comment highlight decorations
   useEffect(() => {
     const editor = editorRef.current;
-    if (!editor || !showComments) {
+    if (!editor) {
+      return;
+    }
+    if (comments.length === 0) {
       if (editor) {
         commentDecorationIdsRef.current = editor.deltaDecorations(commentDecorationIdsRef.current, []);
       }
@@ -1114,7 +1119,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
       commentDecorationIdsRef.current,
       [...inlineDecorations, ...glyphDecorations]
     );
-  }, [comments, showComments, draftContent]);
+  }, [comments, draftContent]);
 
   useEffect(() => {
     if (!selectedId || isDirty === false || isReadOnly || collaborationSessionId !== null) {
@@ -1526,11 +1531,17 @@ export function DocsApp({ coreStart }: DocsAppProps) {
 
   function handleEditorDidMount(editor: monaco.editor.IStandaloneCodeEditor) {
     editorRef.current = editor;
+    let gutterClickActive = false;
+
     editor.onDidChangeCursorSelection(() => {
+      if (gutterClickActive) {
+        gutterClickActive = false;
+        return;
+      }
       const selection = getEditorOffsets(editor);
       setEditorSelection(
-        selection.start !== null && selection.end !== null
-          ? { start: selection.start, end: selection.end }
+        selection.start !== null && selection.end !== null && selection.start !== selection.end
+          ? { start: selection.start, end: selection.end, anchorType: 'range' }
           : null
       );
       const socket = collaborationSocketRef.current;
@@ -1548,22 +1559,50 @@ export function DocsApp({ coreStart }: DocsAppProps) {
 
     // Comment glyph on line number click
     editor.onMouseDown((e) => {
+      const targetType = e.target.type;
+      // Debug: uncomment to see what type glyph clicks produce
+      // console.log('mouseDown type:', targetType, 'position:', e.target.position, 'range:', e.target.range);
+
+      if (
+        targetType === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS ||
+        targetType === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+        targetType === monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS
+      ) {
+        if (!canCommentRef.current) return;
+        const lineNumber = e.target.position.lineNumber;
+        const model = editor.getModel();
+        if (!model) return;
+        const lineStart = model.getOffsetAt({ lineNumber, column: 1 });
+        const lineEnd = model.getOffsetAt({ lineNumber, column: model.getLineMaxColumn(lineNumber) });
+        gutterClickActive = true;
+        setEditorSelection({ start: lineStart, end: lineEnd, lineLabel: `Line ${lineNumber}`, anchorType: 'line' });
+        setShowComments(true);
+        editor.setSelection(new monaco.Range(lineNumber, 1, lineNumber, model.getLineMaxColumn(lineNumber)));
+      }
+    });
+
+    // Show + icon on gutter hover
+    let hoverDecorations: string[] = [];
+    editor.onMouseMove((e) => {
       if (
         e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS ||
-        e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN
+        e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+        e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_DECORATIONS
       ) {
-        const lineNumber = e.target.position?.lineNumber;
-        if (lineNumber && canComment) {
-          const model = editor.getModel();
-          if (!model) return;
-          const lineStart = model.getOffsetAt({ lineNumber, column: 1 });
-          const lineEnd = model.getOffsetAt({ lineNumber, column: model.getLineMaxColumn(lineNumber) });
-          setEditorSelection({ start: lineStart, end: lineEnd, lineLabel: `${lineNumber}` });
-          setShowComments(true);
-          // Visually select the entire line in the editor
-          editor.setSelection(new monaco.Range(lineNumber, 1, lineNumber, model.getLineMaxColumn(lineNumber)));
+        const line = e.target.position?.lineNumber;
+        if (line) {
+          hoverDecorations = editor.deltaDecorations(hoverDecorations, [{
+            range: new monaco.Range(line, 1, line, 1),
+            options: { glyphMarginClassName: 'docsCommentGlyphHover' },
+          }]);
+          return;
         }
       }
+      hoverDecorations = editor.deltaDecorations(hoverDecorations, []);
+    });
+
+    editor.onMouseLeave(() => {
+      hoverDecorations = editor.deltaDecorations(hoverDecorations, []);
     });
   }
 
@@ -2159,6 +2198,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                         automaticLayout: true,
                         lineNumbers: 'on',
                         glyphMargin: true,
+                        glyphMarginWidth: 20,
                         folding: false,
                         wordWrap: 'on',
                         lineDecorationsWidth: 12,

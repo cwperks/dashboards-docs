@@ -43,6 +43,13 @@ function CommentThread({ comments, currentUser, canComment, onReply, onDelete, o
         <div key={comment.id} className="docsCommentItem">
           <div className="docsCommentHeader">
             <span className="docsCommentAuthor">{comment.owner}</span>
+            {comment.startOffset === 0 && comment.endOffset === 0 ? (
+              <span className="docsCommentAnchorBadge docsCommentAnchorBadge--general">Doc</span>
+            ) : (
+              <span className="docsCommentAnchorBadge" onClick={() => onScrollTo(comment)}>
+                📍 {comment.startOffset !== comment.endOffset ? 'Inline' : 'Line'}
+              </span>
+            )}
             <span className="docsCommentTime">{formatTime(comment.createdAt)}</span>
             {comment.owner === currentUser ? (
               <button className="docsCommentDelete" onClick={() => onDelete(comment)}>
@@ -110,7 +117,7 @@ interface CommentPanelProps {
   onDelete: (comment: Comment) => void;
   onScrollTo: (comment: Comment) => void;
   onClearSelection?: () => void;
-  selectionRange: { start: number; end: number; lineLabel?: string } | null;
+  selectionRange: { start: number; end: number; lineLabel?: string; anchorType: 'doc' | 'line' | 'range' } | null;
 }
 
 export function CommentPanel({
@@ -141,7 +148,7 @@ export function CommentPanel({
   });
 
   // Filter to relevant threads if a line/selection is active
-  const hasSelection = selectionRange && selectionRange.start !== selectionRange.end;
+  const hasSelection = selectionRange && selectionRange.anchorType !== 'doc' && selectionRange.start !== selectionRange.end;
   const allThreads = Array.from(threads.values()).sort(
     (a, b) => a[0].createdAt - b[0].createdAt
   );
@@ -175,11 +182,13 @@ export function CommentPanel({
 
       {canComment ? (
         <div className="docsCommentNew">
-          {selectionRange && selectionRange.start !== selectionRange.end ? (
+          {selectionRange && selectionRange.anchorType !== 'doc' ? (
             <div className="docsCommentAnchorPreview">
               <EuiIcon type="editorComment" size="s" />
               <EuiText size="xs" color="subdued">
-                Commenting on line {selectionRange.lineLabel ?? `offset ${selectionRange.start}–${selectionRange.end}`}
+                {selectionRange.anchorType === 'line'
+                  ? `Commenting on ${selectionRange.lineLabel}`
+                  : 'Commenting on selection'}
               </EuiText>
               <button
                 className="docsCommentAnchorClear"
@@ -192,7 +201,7 @@ export function CommentPanel({
           <EuiTextArea
             compressed
             rows={2}
-            placeholder={selectionRange && selectionRange.start !== selectionRange.end ? 'Comment on this line...' : 'Add a general comment...'}
+            placeholder={selectionRange?.anchorType === 'line' ? 'Comment on this line...' : selectionRange?.anchorType === 'range' ? 'Comment on selection...' : 'Add a general comment...'}
             value={newCommentText}
             onChange={(e) => setNewCommentText(e.target.value)}
           />
