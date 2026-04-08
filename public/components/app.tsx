@@ -2296,7 +2296,8 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                     if (folder) {
                       deleteFolder(http, folder.id, folder.seqNo, folder.primaryTerm)
                         .then(() => {
-                          setFolders((current) => current.filter((f) => f.id !== folder.id));
+                          setFolders((current) => current.filter((f) => f.id !== folder.id && f.parentId !== folder.id && !f.path.startsWith(folder.path + '/')));
+                          setDocuments((current) => current.filter((d) => d.folderId !== folder.id && !d.folderPath.startsWith(folder.path + '/')));
                           notifications.toasts.addSuccess(`Deleted folder "${folder.name}".`);
                         })
                         .catch((error: any) => {
