@@ -25,7 +25,7 @@
 
 .docsShell {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: 320px minmax(0, 1fr) auto;
   gap: 24px;
 }
 
@@ -708,4 +708,107 @@
 .docsContextMenuItem--danger:hover {
   background: rgba(189, 39, 30, 0.08);
   color: #bd271e;
+}
+
+/* Comments */
+
+.docsCommentPanel {
+  display: flex;
+  flex-direction: column;
+  width: 300px;
+  border-left: 1px solid rgba(234, 215, 181, 0.4);
+  background: var(--docs-surface, #fff);
+  overflow-y: auto;
+}
+
+.docsCommentPanelHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(234, 215, 181, 0.4);
+}
+
+.docsCommentNew {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(234, 215, 181, 0.4);
+}
+
+.docsCommentThreads {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.docsCommentThread {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(234, 215, 181, 0.25);
+}
+
+.docsCommentThread--unread {
+  border-left: 3px solid var(--docs-accent);
+}
+
+.docsCommentItem {
+  margin-bottom: 8px;
+}
+
+.docsCommentHeader {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.docsCommentAuthor {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--docs-ink);
+}
+
+.docsCommentTime {
+  font-size: 11px;
+  color: var(--docs-muted);
+}
+
+.docsCommentDelete {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--docs-muted);
+  cursor: pointer;
+  padding: 2px;
+  opacity: 0;
+}
+
+.docsCommentItem:hover .docsCommentDelete {
+  opacity: 1;
+}
+
+.docsCommentBody {
+  font-size: 13px;
+  color: var(--docs-ink);
+  line-height: 1.4;
+}
+
+.docsCommentReply {
+  padding-top: 8px;
+}
+
+.docsCommentReplyButton {
+  border: none;
+  background: transparent;
+  color: var(--docs-accent);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.docsCommentReplyButton:hover {
+  color: var(--docs-accent-strong);
+}
+
+.docsCommentEmpty {
+  padding: 24px 16px;
+  text-align: center;
 }

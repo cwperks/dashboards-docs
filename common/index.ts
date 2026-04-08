@@ -12,6 +12,7 @@ export const FOLDER_RESOURCE_TYPE = 'docs-folder';
 export const DOC_GET_ACTION = 'docs:document/get';
 export const DOC_UPSERT_ACTION = 'docs:document/upsert';
 export const DOC_DELETE_ACTION = 'docs:document/delete';
+export const COMMENT_CREATE_ACTION = 'docs:comment/create';
 export const RESOURCE_SHARE_ACTION = 'cluster:admin/security/resource/share';
 
 export interface DocumentSummary {
@@ -224,4 +225,33 @@ export function formatAccessLevelLabel(accessLevel: string): string {
     : accessLevel;
   const normalized = suffix.replace(/_/g, ' ');
   return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+export interface Comment {
+  id: string;
+  documentId: string;
+  threadId: string;
+  commentText: string;
+  startOffset: number;
+  endOffset: number;
+  owner: string;
+  createdAt: number;
+  updatedAt: number;
+  isDeleted: boolean;
+  readBy: string[];
+  seqNo: number;
+  primaryTerm: number;
+}
+
+export interface ListCommentsResponse {
+  comments: Comment[];
+}
+
+export interface CreateCommentResponse {
+  comment: Comment;
+}
+
+export interface DeleteCommentResponse {
+  deleted: boolean;
+  commentId: string;
 }

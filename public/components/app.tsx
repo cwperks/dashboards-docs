@@ -36,6 +36,8 @@ import { CoreStart } from '../../../../src/core/public';
 import {
   CollaborationParticipant,
   CollaborationReplaceOperation,
+  Comment,
+  COMMENT_CREATE_ACTION,
   DASHBOARDS_DOCS_API_BASE,
   DOC_DELETE_ACTION,
   DOC_RESOURCE_TYPE,
@@ -63,7 +65,9 @@ import {
   syncCollaborationSession,
 } from '../services/collaboration';
 import { ShareModal } from './share_modal';
+import { CommentPanel } from './comment_panel';
 import { getResourceAccess, getSharingConfig } from '../services/sharing';
+import { listComments, createComment, deleteComment } from '../services/comments';
 
 type ViewMode = 'write' | 'split' | 'preview';
 
@@ -373,6 +377,11 @@ export function DocsApp({ coreStart }: DocsAppProps) {
   const [readOnlyReason, setReadOnlyReason] = useState<string | null>(null);
   const [canDeleteDocument, setCanDeleteDocument] = useState(true);
   const [canShareDocument, setCanShareDocument] = useState(true);
+  const [canComment, setCanComment] = useState(true);
+  const [comments, setComments] = useState<Comment[]>([]);
+  const [showComments, setShowComments] = useState(false);
+  const [editorSelection, setEditorSelection] = useState<{ start: number; end: number } | null>(null);
+  const [currentUserName, setCurrentUserName] = useState('unknown');
   const [sharingConfig, setSharingConfig] = useState(EMPTY_RESOURCE_SHARING_CONFIG);
   const [collaborationSessionId, setCollaborationSessionId] = useState<string | null>(null);
   const [collaborationParticipants, setCollaborationParticipants] = useState<
@@ -711,8 +720,10 @@ export function DocsApp({ coreStart }: DocsAppProps) {
         const canEdit = accessResponse ? allowedActions.includes(DOC_UPSERT_ACTION) : true;
         const canDelete = accessResponse ? allowedActions.includes(DOC_DELETE_ACTION) : true;
         const canShare = accessResponse ? accessResponse.access.can_share === true : true;
+        const userCanComment = accessResponse ? allowedActions.includes(COMMENT_CREATE_ACTION) : true;
 
         setSelectedDocument(documentResponse.document);
+        setCanComment(userCanComment);
         setDraftTitle(documentResponse.document.title);
         setDraftContent(documentResponse.document.content);
         setDraftFolder(documentResponse.document.folderPath);
@@ -772,6 +783,8 @@ export function DocsApp({ coreStart }: DocsAppProps) {
         joinedSessionId = response.session_id;
         setCollaborationSessionId(response.session_id);
         setCoordinatorSessionId(response.coordinator_session_id);
+        const selfParticipant = response.participants.find((p) => p.is_self === true);
+        if (selfParticipant) setCurrentUserName(selfParticipant.user_name);
         setCollaborationParticipants(
           response.participants.filter((participant) => participant.is_self !== true)
         );
@@ -807,6 +820,23 @@ export function DocsApp({ coreStart }: DocsAppProps) {
         });
       }
     };
+  }, [http, selectedDocument?.id]);
+
+  // Load comments when document changes
+  useEffect(() => {
+    if (!selectedDocument) {
+      setComments([]);
+      return;
+    }
+    let cancelled = false;
+    listComments(http, selectedDocument.id)
+      .then((response) => {
+        if (!cancelled) setComments(response.comments);
+      })
+      .catch(() => {
+        if (!cancelled) setComments([]);
+      });
+    return () => { cancelled = true; };
   }, [http, selectedDocument?.id]);
 
   useEffect(() => {
@@ -1449,6 +1479,11 @@ export function DocsApp({ coreStart }: DocsAppProps) {
     editorRef.current = editor;
     editor.onDidChangeCursorSelection(() => {
       const selection = getEditorOffsets(editor);
+      setEditorSelection(
+        selection.start !== null && selection.end !== null
+          ? { start: selection.start, end: selection.end }
+          : null
+      );
       const socket = collaborationSocketRef.current;
 
       if (socket?.readyState === WebSocket.OPEN) {
@@ -1910,6 +1945,18 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                     <EuiFlexItem grow={false}>
                       <EuiButtonEmpty
                         size="s"
+                        iconType="editorComment"
+                        onClick={() => setShowComments((v) => !v)}
+                        color={showComments ? 'primary' : 'text'}
+                      >
+                        Comments{comments.length > 0 ? ` (${comments.length})` : ''}
+                      </EuiButtonEmpty>
+                    </EuiFlexItem>
+                  ) : null}
+                  {selectedDocument ? (
+                    <EuiFlexItem grow={false}>
+                      <EuiButtonEmpty
+                        size="s"
                         iconType="folderClosed"
                         isDisabled={isReadOnly || canPersistCurrentDocument === false}
                         onClick={openMoveModal}
@@ -2041,7 +2088,7 @@ export function DocsApp({ coreStart }: DocsAppProps) {
                         minimap: { enabled: false },
                         scrollBeyondLastLine: false,
                         automaticLayout: true,
-                        lineNumbers: 'off',
+                        lineNumbers: 'on',
                         glyphMargin: false,
                         folding: false,
                         wordWrap: 'on',
@@ -2087,6 +2134,50 @@ export function DocsApp({ coreStart }: DocsAppProps) {
             </div>
           </EuiPanel>
         </main>
+
+        {showComments && selectedDocument ? (
+          <CommentPanel
+            comments={comments}
+            currentUser={currentUserName}
+            canComment={canComment}
+            selectionRange={editorSelection}
+            onAddComment={async (text, startOffset, endOffset) => {
+              try {
+                const response = await createComment(http, {
+                  documentId: selectedDocument.id,
+                  commentText: text,
+                  startOffset,
+                  endOffset,
+                });
+                setComments((current) => [...current, response.comment]);
+              } catch (error: any) {
+                notifications.toasts.addDanger(`Failed to add comment: ${error?.message || error}`);
+              }
+            }}
+            onReply={async (threadId, text) => {
+              try {
+                const response = await createComment(http, {
+                  documentId: selectedDocument.id,
+                  threadId,
+                  commentText: text,
+                  startOffset: 0,
+                  endOffset: 0,
+                });
+                setComments((current) => [...current, response.comment]);
+              } catch (error: any) {
+                notifications.toasts.addDanger(`Failed to reply: ${error?.message || error}`);
+              }
+            }}
+            onDelete={async (comment) => {
+              try {
+                await deleteComment(http, comment.id, comment.seqNo, comment.primaryTerm);
+                setComments((current) => current.filter((c) => c.id !== comment.id));
+              } catch (error: any) {
+                notifications.toasts.addDanger(`Failed to delete comment: ${error?.message || error}`);
+              }
+            }}
+          />
+        ) : null}
       </div>
 
       {isMoveModalVisible && selectedDocument ? (

@@ -676,6 +676,90 @@ export function defineRoutes(
       return response.ok({ body: { left: true } });
     }
   );
+
+  // ---- Comments ----
+
+  router.get(
+    {
+      path: `${DASHBOARDS_DOCS_API_BASE}/comments`,
+      validate: {
+        query: schema.object({
+          documentId: schema.string(),
+        }),
+      },
+    },
+    async (context, request, response) => {
+      try {
+        const result = await context.core.opensearch.client.asCurrentUser.transport.request({
+          method: 'GET',
+          path: `${OPENSEARCH_DOCS_API_BASE}/comments?documentId=${encodeURIComponent(request.query.documentId)}`,
+        });
+        return response.ok({ body: result.body });
+      } catch (error) {
+        logger.warn(`Failed to list comments: ${error}`);
+        return response.customError(getErrorPayload(error));
+      }
+    }
+  );
+
+  router.put(
+    {
+      path: `${DASHBOARDS_DOCS_API_BASE}/comments`,
+      validate: {
+        body: schema.object({
+          documentId: schema.string(),
+          threadId: schema.maybe(schema.nullable(schema.string())),
+          commentText: schema.string({ minLength: 1 }),
+          startOffset: schema.number({ min: 0 }),
+          endOffset: schema.number({ min: 0 }),
+        }),
+      },
+    },
+    async (context, request, response) => {
+      try {
+        const result = await context.core.opensearch.client.asCurrentUser.transport.request({
+          method: 'PUT',
+          path: `${OPENSEARCH_DOCS_API_BASE}/comments`,
+          body: request.body,
+        });
+        return response.ok({ body: result.body });
+      } catch (error) {
+        logger.warn(`Failed to create comment: ${error}`);
+        return response.customError(getErrorPayload(error));
+      }
+    }
+  );
+
+  router.delete(
+    {
+      path: `${DASHBOARDS_DOCS_API_BASE}/comments/{commentId}`,
+      validate: {
+        params: schema.object({
+          commentId: schema.string(),
+        }),
+        query: schema.object({
+          seqNo: schema.number(),
+          primaryTerm: schema.number(),
+        }),
+      },
+    },
+    async (context, request, response) => {
+      try {
+        const query = new URLSearchParams({
+          seqNo: String(request.query.seqNo),
+          primaryTerm: String(request.query.primaryTerm),
+        });
+        const result = await context.core.opensearch.client.asCurrentUser.transport.request({
+          method: 'DELETE',
+          path: `${OPENSEARCH_DOCS_API_BASE}/comments/${request.params.commentId}?${query}`,
+        });
+        return response.ok({ body: result.body });
+      } catch (error) {
+        logger.warn(`Failed to delete comment: ${error}`);
+        return response.customError(getErrorPayload(error));
+      }
+    }
+  );
 }
 
 export function defineWebSocketRoute(
